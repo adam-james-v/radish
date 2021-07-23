@@ -1,0 +1,10 @@
+{
+  "resources": [
+     {"pattern": "style.css"},
+     {"pattern": "codemirror.css"},
+     {"pattern": "nord.css"},
+     {"pattern": "codemirror.js"},
+     {"pattern": "clojure.js"},
+     {"pattern": "code-runner.cljs"}
+  ]
+}

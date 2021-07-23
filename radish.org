@@ -37,14 +37,7 @@
 
 #+end_src
 
-** build-cmds
-*** build-library-jar
-#+begin_src shell
-clojure -X:uberjar
-#+end_src
-
 ** bb.edn
-
 #+begin_src clojure :tangle ./bb.edn
 {:tasks
  {:requires ([babashka.fs :as fs]
@@ -78,9 +71,18 @@ clojure -X:uberjar
    :task (binding [*command-line-args* ["java" "-jar" "radish.jar" "-i" "radish-basic.org"]]
            (load-file "scripts/gen-reflect-config.clj"))}
 
+  -clean-build
+  {:doc "Cleans up Native Image compilation artifacts"
+   :task (do
+           (shell "rm" "-rf" "radish-basic-example")
+           (shell "rm" "-f" "radish.jar")
+           (shell "rm" "-rf" "build/tmp")
+           (shell "rm" "-f" "trace-file.json")
+           (shell "rm" "-f" "radish.build_artifacts.txt"))}
+
   native-image
   {:doc "Builds native image"
-   :depends [graalvm uberjar gen-reflect-config]
+   :depends [-clean-build graalvm uberjar gen-reflect-config]
    :task (do
            (shell (str (fs/file graalvm
                                 "bin"
@@ -94,21 +96,19 @@ clojure -X:uberjar
                                   "native-image.cmd"
                                   "native-image")))
                   "-H:Name=radish"
-                  "-H:ReflectionConfigurationFiles=reflect-config-cleaned.json"
+                  "-H:ReflectionConfigurationFiles=build/tmp/reflect-config-cleaned.json"
+                  "-H:ResourceConfigurationFiles=resource-config.json"
                   "-jar" "radish.jar"
                   "--initialize-at-build-time"
                   "--no-fallback"
-                  "--no-server"))}
-
-  clean
-  {:doc "Cleans up Native Image compilation artifacts"
-   :task (do
-           (shell "rm" "*.json")
-           (shell "rm" "*.txt"))}}}
+                  "--no-server")
+           (run '-clean-build)
+           (shell "mv" "-f" "./radish" "./build/radish"))}}}
 
 #+end_src
 
-** build-scripts
+** build-resources
+*** gen-reflect-script
 Use these scripts to help with the native-image build process. Jar/uberjar builds work just fine with bb tasks already.
 
 This script is from borkdude's example repo:
@@ -122,12 +122,13 @@ This script takes a reflect-config.json and cleans it up by removing unnecessary
 
 (require '[babashka.process :refer [process]]
          '[cheshire.core :as cheshire]
-         '[clojure.string :as str])
+         '[clojure.string :as str]
+         '[clojure.java.shell :refer [sh]])
 
 (def trace-cmd *command-line-args*)
 
 (def trace-agent-env "-agentlib:native-image-agent=trace-output=trace-file.json")
-(def config-agent-env "-agentlib:native-image-agent=config-output-dir=.")
+(def config-agent-env "-agentlib:native-image-agent=config-output-dir=build/tmp")
 
 @(process trace-cmd {:inherit true :extra-env {"JAVA_TOOL_OPTIONS" trace-agent-env}})
 @(process trace-cmd {:inherit true :extra-env {"JAVA_TOOL_OPTIONS" config-agent-env}})
@@ -186,12 +187,27 @@ This script takes a reflect-config.json and cleans it up by removing unnecessary
       (assoc m :name "java.lang.reflect.AccessibleObject")
       m)))
 
-(def config-json (cheshire/parse-string (slurp "reflect-config.json") true))
+(def config-json (cheshire/parse-string (slurp "build/tmp/reflect-config.json") true))
 
 (def cleaned (keep process-1 config-json))
 
-(spit "reflect-config-cleaned.json" (cheshire/generate-string cleaned {:pretty true}))
+(sh "mkdir" "-p" "build/tmp")
+(spit "build/tmp/reflect-config-cleaned.json" (cheshire/generate-string cleaned {:pretty true}))
+(shutdown-agents)
+#+end_src
 
+*** resource-config
+#+begin_src json :tangle ./resource-config.json
+{
+  "resources": [
+     {"pattern": "style.css"},
+     {"pattern": "codemirror.css"},
+     {"pattern": "nord.css"},
+     {"pattern": "codemirror.js"},
+     {"pattern": "clojure.js"},
+     {"pattern": "code-runner.cljs"}
+  ]
+}
 #+end_src
 
 ** readme

@@ -30,9 +30,18 @@
    :task (binding [*command-line-args* ["java" "-jar" "radish.jar" "-i" "radish-basic.org"]]
            (load-file "scripts/gen-reflect-config.clj"))}
 
+  -clean-build
+  {:doc "Cleans up Native Image compilation artifacts"
+   :task (do
+           (shell "rm" "-rf" "radish-basic-example")
+           (shell "rm" "-f" "radish.jar")
+           (shell "rm" "-rf" "build/tmp")
+           (shell "rm" "-f" "trace-file.json")
+           (shell "rm" "-f" "radish.build_artifacts.txt"))}
+
   native-image
   {:doc "Builds native image"
-   :depends [graalvm uberjar gen-reflect-config]
+   :depends [-clean-build graalvm uberjar gen-reflect-config]
    :task (do
            (shell (str (fs/file graalvm
                                 "bin"
@@ -46,14 +55,11 @@
                                   "native-image.cmd"
                                   "native-image")))
                   "-H:Name=radish"
-                  "-H:ReflectionConfigurationFiles=reflect-config-cleaned.json"
+                  "-H:ReflectionConfigurationFiles=build/tmp/reflect-config-cleaned.json"
+                  "-H:ResourceConfigurationFiles=resource-config.json"
                   "-jar" "radish.jar"
                   "--initialize-at-build-time"
                   "--no-fallback"
-                  "--no-server"))}
-
-  clean
-  {:doc "Cleans up Native Image compilation artifacts"
-   :task (do
-           (shell "rm" "*.json")
-           (shell "rm" "*.txt"))}}}
+                  "--no-server")
+           (run '-clean-build)
+           (shell "mv" "-f" "./radish" "./build/radish"))}}}

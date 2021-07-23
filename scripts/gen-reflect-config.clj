@@ -2,12 +2,13 @@
 
 (require '[babashka.process :refer [process]]
          '[cheshire.core :as cheshire]
-         '[clojure.string :as str])
+         '[clojure.string :as str]
+         '[clojure.java.shell :refer [sh]])
 
 (def trace-cmd *command-line-args*)
 
 (def trace-agent-env "-agentlib:native-image-agent=trace-output=trace-file.json")
-(def config-agent-env "-agentlib:native-image-agent=config-output-dir=.")
+(def config-agent-env "-agentlib:native-image-agent=config-output-dir=build/tmp")
 
 @(process trace-cmd {:inherit true :extra-env {"JAVA_TOOL_OPTIONS" trace-agent-env}})
 @(process trace-cmd {:inherit true :extra-env {"JAVA_TOOL_OPTIONS" config-agent-env}})
@@ -66,8 +67,10 @@
       (assoc m :name "java.lang.reflect.AccessibleObject")
       m)))
 
-(def config-json (cheshire/parse-string (slurp "reflect-config.json") true))
+(def config-json (cheshire/parse-string (slurp "build/tmp/reflect-config.json") true))
 
 (def cleaned (keep process-1 config-json))
 
-(spit "reflect-config-cleaned.json" (cheshire/generate-string cleaned {:pretty true}))
+(sh "mkdir" "-p" "build/tmp")
+(spit "build/tmp/reflect-config-cleaned.json" (cheshire/generate-string cleaned {:pretty true}))
+(shutdown-agents)
