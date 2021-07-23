@@ -202,6 +202,11 @@ A kinda-cool org-mode -> interactive blog post tool written with and for Clojure
 ## Why Radish?
 A friend sent me a meme about radishes while I was thinking of a name for this project. I chuckled, then figured it's a good enough name for a small project like this.
 
+## Current Limitations
+The only build method so far is 'basic-build', which relies on a simple script executed in your browser by scittle after the page loads. It has no dependency loading capabilities and thus is limited to executing Clojurescript code that only relies on core libraries.
+
+A more complete build process is underway where the idea is to compile dependencies using the Clojurescript compiler and creating a page via that process.
+
 #+END_SRC
 
 * design
@@ -645,4 +650,22 @@ This script is used in a basic site output, when there is no need to grab extern
         (println msg)
         (basic-build! org-str)
         (println "Success! Have a nice day :)")))))
+#+end_src
+
+* tests
+Run the tests and see results in the org file:
+
+#+begin_src bash :results output
+clojure -M:test
+#+end_src
+
+#+RESULTS[116d660ac0b49c9f89d2655628c6797b983a8032]:
+
+#+begin_src clojure :tangle ./test/radish/main_test.clj
+(ns radish.main-test
+  (:require [clojure.test :as t :refer [deftest is]]
+            [radish.main :as rad]))
+
+(deftest asdf (is (= true true)))
+
 #+end_src
