@@ -1,5 +1,3 @@
-<img src="https://github.com/adam-james-v/svg-clj/blob/main/examples/quilt.png" alt="A colourful render of a quilt design" width="300">
-
 # Radish
 A kinda-cool org-mode -> interactive blog post tool written with and for Clojure(script).
 
