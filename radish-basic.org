@@ -1,0 +1,82 @@
+* ;; :noexport:
+#+Title: Radish Basic Example
+#+AUTHOR: Adam James
+#+STARTUP: overview
+#+EXCLUDE_TAGS: excl
+#+PROPERTY: header-args :cache yes :noweb yes :results value :mkdirp yes :padline yes :async
+#+HTML_DOCTYPE: html5
+#+OPTIONS: toc:2 num:nil html-style:nil html-postamble:nil html-preamble:nil html5-fancy:t
+
+* Interactive Clojure(script) Blog Posts with Scittle
+This is an interactive Clojure blog post example. It is meant to showcase the basic-build! function of radish, a site compiler written in Clojure which takes org-mode files and produces working CLJS websites, which you can easily upload to your website.
+
+** Some Basic Codeblocks
+Here is a clojure source block, whose results are evaluated live in the browser. You can edit the code below and see live evaluation!
+
+This radish site is powered by scittle, but does not have an dependecy resolution approach, so you will be restricted to the functionality provided by sci.
+
+I believe that for many cases, this can be perfectly usable. For those situations requiring additional libraries, there will soon be a second compilation process provided by radish that compiles dependencies as a proper Clojurescript project, which means that you can also use any Clojuresscript compatible library in your posts.
+
+#+begin_src clojure
+(def my-name "Adam James")
+
+(defn hello
+  [name]
+  (str "Hello, " name))
+
+(hello my-name) 
+
+#+end_src
+
+If you have displayed results in the org file, that result block is removed from the output as it will be re-calculated once the page is visited.
+
+Evaluation is done in a global context, which means you can define functions and vars in one block and use them in another.
+
+#+begin_src clojure
+(def my-other-name "Rusty")
+
+(hello my-other-name)
+
+#+end_src
+
+#+RESULTS[8484ebe476b079e593399df3d50812a8d613c782]:
+| #'user/my-other-name |
+| "Hello, Rusty"       |
+
+That's pretty cool, if you ask me!
+
+** Renderable Output
+Org-mode allows you to display images inline, which can be quite useful when paired with functions that generate images. I have successfully used this in the past to make a cool literate-programming drawing of a flower: [[https://github.com/adam-james-v/bb-draw/blob/main/bb-draw.org][bb-draw]].
+
+Browsers are also great places to render things; that's kind of their thing. Radish takes advantage of this by using scittle's Reagent plugin to render into the DOM. It's nothing special, but it works!
+
+If your code block's final result is a renderable data structure (hiccup), it will render it into a div below the results ~pre~ tag.
+
+#+begin_src clojure
+(defn rand-col
+  []
+  (str "rgb("
+       (+ 100 (rand-int 155)) ","
+       (+ 100 (rand-int 155)) ","
+       (+ 100 (rand-int 155)) ")"))
+
+(defn rand-gradient
+  ([] (rand-gradient 2))
+  ([n-cols]
+   (let [n-cols (if (< n-cols 2) 2 n-cols)
+         direction (str (rand-int 360) "deg, ")
+         cols (str/join ", " (repeatedly n-cols rand-col))]
+     (str "linear-gradient(" direction cols ")"))))
+  
+(def gradient-circle
+  [:div {:style {:border-radius "50%"
+                 :width 120
+                 :height 120
+                 :background-image (rand-gradient)}}])
+
+gradient-circle
+#+end_src
+
+This can surely be (ab)used in creative ways. Go ahead and try things out! Don't be shocked if you break the page though... if you manage to have Reagent render an invalid element into the DOM, it may completely wipe the page. And, I don't have any persistance, so you'll lose any code you've written.
+
+Just keep in mind that this is a blog post, not an IDE and you should be alright.

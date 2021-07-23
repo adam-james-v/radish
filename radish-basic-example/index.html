@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Radish Basic Example</title><link href="style.css" rel="stylesheet" type="text/css"><link href="codemirror.css" rel="stylesheet" type="text/css"><link href="nord.css" rel="stylesheet" type="text/css"><script src="codemirror.js" type="text/javascript"></script><script src="clojure.js" type="text/javascript"></script><script src="https://cdn.jsdelivr.net/gh/borkdude/scittle@0.0.2/js/scittle.js" type="text/javascript"></script><script src="https://unpkg.com/react@17/umd/react.production.min.js" type="text/javascript"></script><script src="https://unpkg.com/react-dom@17/umd/react-dom.production.min.js" type="text/javascript"></script><script src="https://cdn.jsdelivr.net/gh/borkdude/scittle@0.0.2/js/scittle.reagent.js" type="text/javascript"></script><script type="application/x-scittle">(require '[reagent.core :as r]
+         '[reagent.dom :as rdom])
+
+(defn editor
+  [id state]
+  (let [lines (str/split-lines @state)
+        cm (.fromTextArea  js/CodeMirror
+                           (.getElementById js/document id)
+                           #js {:mode "clojure"
+                                :theme "nord"
+                                :lineNumbers true
+                                :smartIndent true
+                                :tabSize 2})]
+    (.on cm "change" (fn [_ _]
+                       (reset! state (.getValue cm))))
+    (.setSize cm "auto" "auto")))
+
+(defn renderable-element?
+  [elem]
+  (and (vector? elem)
+       (keyword? (first elem))
+       (not= (str (first elem)) ":")
+       (not (re-matches #"[0-9]+" (name (first elem))))
+       (not (re-matches #".*[\W]+" (name (first elem))))))
+
+(defn renderable?
+  [elem]
+  (when (or (renderable-element? elem) (seq? elem))
+    (let [[k props content] elem
+          [props content] (if (and (nil? content)
+                                   (not (map? props)))
+                            [nil props]
+                            [props content])]
+      (cond
+        (seq? elem) (not (empty? (filter renderable? elem)))
+        (seq? content) (not (empty? (filter renderable? content)))
+        :else (or (renderable-element? content)
+                  (renderable-element? elem)
+                  (string? content)
+                  (number? content))))))
+
+(defn result-component
+  [state]
+  (fn [state]
+    (let [result (try (js/scittle.core.eval_string @state)
+                      (catch :default e
+                        (.-message e)))]
+      [:div.result
+       [:pre
+        [:div "RESULT:"]
+        [:code (if result (str result) "nil")]
+        (when (renderable? result) [:div result])]])))
+
+(defn run-src
+  [elem]
+  (let [id (gensym "src-")
+        src-str (.-innerText elem)
+        parent (.-parentNode elem)
+        state (r/atom src-str)]
+    (rdom/render [:textarea {:id id} src-str] parent)
+    (editor id state)
+    (rdom/render [result-component state] parent)))
+
+(defn run! []
+  (let [blocks (vec (.getElementsByClassName js/document "src-clojure"))]
+    (mapv run-src blocks)))
+
+(run!)
+</script></head><body><header><h1>Radish Basic Example</h1></header><main><section id="root"><section class="hsec2"><h2>Interactive Clojure(script) Blog Posts with Scittle</h2>This is an interactive Clojure blog post example. It is meant to showcase the basic-build! function of radish, a site compiler written in Clojure which takes org-mode files and produces working CLJS websites, which you can easily upload to your website.
+<p></p><section class="hsec3"><h3>Some Basic Codeblocks</h3>Here is a clojure source block, whose results are evaluated live in the browser. You can edit the code below and see live evaluation!
+<p>This radish site is powered by scittle, but does not have an dependecy resolution approach, so you will be restricted to the functionality provided by sci.
+<p>I believe that for many cases, this can be perfectly usable. For those situations requiring additional libraries, there will soon be a second compilation process provided by radish that compiles dependencies as a proper Clojurescript project, which means that you can also use any Clojuresscript compatible library in your posts.
+<p><div class="code-container"><pre class="src-clojure">(def my-name "Adam James")
+
+(defn hello
+  [name]
+  (str "Hello, " name))
+
+(hello my-name) 
+</pre></div><p>If you have displayed results in the org file, that result block is removed from the output as it will be re-calculated once the page is visited.
+<p>Evaluation is done in a global context, which means you can define functions and vars in one block and use them in another.
+<p><div class="code-container"><pre class="src-clojure">(def my-other-name "Rusty")
+
+(hello my-other-name)
+</pre></div><p><p>That's pretty cool, if you ask me!
+<p></p></p></p></p></p></p></p></p></p></section><section class="hsec3"><h3>Renderable Output</h3>Org-mode allows you to display images inline, which can be quite useful when paired with functions that generate images. I have successfully used this in the past to make a cool literate-programming drawing of a flower: 
+<a href="https://github.com/adam-james-v/bb-draw/blob/main/bb-draw.org">bb-draw</a>.
+<!-- 
+ --><p>Browsers are also great places to render things; that's kind of their thing. Radish takes advantage of this by using scittle's Reagent plugin to render into the DOM. It's nothing special, but it works!
+<p>If your code block's final result is a renderable data structure (hiccup), it will render it into a div below the results 
+<code>pre
+</code> tag.
+<!-- 
+ --><p><div class="code-container"><pre class="src-clojure">(defn rand-col
+  []
+  (str "rgb("
+       (+ 100 (rand-int 155)) ","
+       (+ 100 (rand-int 155)) ","
+       (+ 100 (rand-int 155)) ")"))
+
+(defn rand-gradient
+  ([] (rand-gradient 2))
+  ([n-cols]
+   (let [n-cols (if (< n-cols 2) 2 n-cols)
+         direction (str (rand-int 360) "deg, ")
+         cols (str/join ", " (repeatedly n-cols rand-col))]
+     (str "linear-gradient(" direction cols ")"))))
+  
+(def gradient-circle
+  [:div {:style {:border-radius "50%"
+                 :width 120
+                 :height 120
+                 :background-image (rand-gradient)}}])
+
+gradient-circle</pre></div><p>This can surely be (ab)used in creative ways. Go ahead and try things out! Don't be shocked if you break the page though... if you manage to have Reagent render an invalid element into the DOM, it may completely wipe the page. And, I don't have any persistance, so you'll lose any code you've written.
+<p>Just keep in mind that this is a blog post, not an IDE and you should be alright.
+</p></p></p></p></p></section></section></section></main><footer><p>Written by <span style="font-style:italic;">Adam James</span></p><p>Generated by <span style="font-weight:bold;"><a href="https://github.com/adam-james-v/radish">radish</a></span></p></footer></body></html>

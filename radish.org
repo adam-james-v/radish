@@ -1,0 +1,650 @@
+* ;;
+#+Title: radish
+#+AUTHOR: adam-james
+#+STARTUP: overview
+#+EXCLUDE_TAGS: excl
+#+PROPERTY: header-args :cache yes :noweb yes :results value :mkdirp yes :padline yes :async
+#+HTML_DOCTYPE: html5
+#+OPTIONS: toc:2 num:nil html-style:nil html-postamble:nil html-preamble:nil html5-fancy:t
+
+** deps.edn
+#+NAME: deps.edn
+#+begin_src clojure :tangle ./deps.edn
+{:deps 
+ {org.clojure/clojure   {:mvn/version "1.10.3"}
+  org.clojure/tools.cli {:mvn/version "1.0.206"}
+  hiccup/hiccup         {:mvn/version "2.0.0-alpha2"}
+  orgmode/orgmode
+  {:git/url "https://github.com/bnbeckwith/orgmode"
+   :sha "722972c72b43c18a5cdbbc9c3e392b5ee9e2b503"}
+  #_{:local/root "/Users/adam/dev/orgmode"}}
+ :paths ["src" "resources"]
+ :aliases
+ {:test
+  {:extra-paths ["test"]
+   :extra-deps {org.clojure/test.check {:mvn/version "1.1.0"}
+                com.cognitect/test-runner
+                {:git/url "https://github.com/cognitect-labs/test-runner.git"
+                 :sha "209b64504cb3bd3b99ecfec7937b358a879f55c1"}}
+   :main-opts ["-m" "cognitect.test-runner"]}
+  
+  :uberjar
+  {:replace-deps {com.github.seancorfield/depstar {:mvn/version "2.1.245"}}
+   :exec-fn hf.depstar/uberjar
+   :exec-args {:jar radish.jar
+               :main-class radish.main
+               :aot true}}}}
+
+#+end_src
+
+** build-cmds
+*** build-library-jar
+#+begin_src shell
+clojure -X:uberjar
+#+end_src
+
+** bb.edn
+
+#+begin_src clojure :tangle ./bb.edn
+{:tasks
+ {:requires ([babashka.fs :as fs]
+             [clojure.string :as str])
+  :init (def windows? (str/starts-with? (System/getProperty "os.name")
+                                        "Windows"))
+  run-main
+  {:doc "Run main"
+   :task (apply clojure "-M -m radish.main" *command-line-args*)}
+  
+  uberjar
+  {:doc "Builds uberjar"
+   :task (when (seq (fs/modified-since "radish.jar" "src"))
+           (clojure "-X:uberjar"))}
+
+  run-uber
+  {:doc "Run uberjar"
+   :depends [uberjar]
+   :task (apply shell "java -jar radish.jar" *command-line-args*)}
+  
+  graalvm
+  {:doc "Checks GRAALVM_HOME env var"
+   :task
+   (let [env (System/getenv "GRAALVM_HOME")]
+     (assert "Set GRAALVM_HOME")
+     env)}
+  
+  gen-reflect-config
+  {:doc "Runs scripts/gen-reflect-config.clj on the compiled jar."
+   :depends [graalvm uberjar]
+   :task (binding [*command-line-args* ["java" "-jar" "radish.jar" "-i" "radish-basic.org"]]
+           (load-file "scripts/gen-reflect-config.clj"))}
+
+  native-image
+  {:doc "Builds native image"
+   :depends [graalvm uberjar gen-reflect-config]
+   :task (do
+           (shell (str (fs/file graalvm
+                                "bin"
+                                (if windows?
+                                  "gu.cmd"
+                                  "gu")))
+                  "install" "native-image")
+           (shell (str (fs/file graalvm
+                                "bin"
+                                (if windows?
+                                  "native-image.cmd"
+                                  "native-image")))
+                  "-H:Name=radish"
+                  "-H:ReflectionConfigurationFiles=reflect-config-cleaned.json"
+                  "-jar" "radish.jar"
+                  "--initialize-at-build-time"
+                  "--no-fallback"
+                  "--no-server"))}
+
+  clean
+  {:doc "Cleans up Native Image compilation artifacts"
+   :task (do
+           (shell "rm" "*.json")
+           (shell "rm" "*.txt"))}}}
+
+#+end_src
+
+** build-scripts
+Use these scripts to help with the native-image build process. Jar/uberjar builds work just fine with bb tasks already.
+
+This script is from borkdude's example repo:
+
+[[https://github.com/borkdude/refl/blob/main/script/gen-reflect-config.clj]]
+
+This script takes a reflect-config.json and cleans it up by removing unnecessary clojure classes and fixing the bug(?) where java.lang.reflect.Method causes native-image to fail at setup phase.
+
+#+begin_src clojure :tangle ./scripts/gen-reflect-config.clj
+#!/usr/bin/env bb
+
+(require '[babashka.process :refer [process]]
+         '[cheshire.core :as cheshire]
+         '[clojure.string :as str])
+
+(def trace-cmd *command-line-args*)
+
+(def trace-agent-env "-agentlib:native-image-agent=trace-output=trace-file.json")
+(def config-agent-env "-agentlib:native-image-agent=config-output-dir=.")
+
+@(process trace-cmd {:inherit true :extra-env {"JAVA_TOOL_OPTIONS" trace-agent-env}})
+@(process trace-cmd {:inherit true :extra-env {"JAVA_TOOL_OPTIONS" config-agent-env}})
+
+(def trace-json (cheshire/parse-string (slurp "trace-file.json") true))
+
+;; [Z = boolean
+;; [B = byte
+;; [S = short
+;; [I = int
+;; [J = long
+;; [F = float
+;; [D = double
+;; [C = char
+;; [L = any non-primitives(Object)
+
+(defn normalize-array-name [n]
+  ({"[F" "float[]"
+    "[B" "byte[]"
+    "[Z" "boolean[]"
+    "[C" "char[]"
+    "[D" "double[]"
+    "[I" "int[]"
+    "[J" "long[]"
+    "[S" "short[]"} n n))
+
+(def ignored (atom #{}))
+(def unignored (atom #{}))
+
+(defn ignore [{:keys [:tracer :caller_class :function :args] :as _m}]
+  (when (= "reflect" tracer)
+    (when-let [arg (first args)]
+      (let [arg (normalize-array-name arg)]
+        (if (and caller_class
+                 (or (= "clojure.lang.RT" caller_class)
+                     (= "clojure.genclass__init" caller_class)
+                     (and (str/starts-with? caller_class "clojure.core$fn")
+                          (= "java.sql.Timestamp" arg)))
+                 (= "forName" function))
+          (swap! ignored conj arg)
+          (when (= "clojure.lang.RT" caller_class)
+            ;; unignore other reflective calls in clojure.lang.RT
+            (swap! unignored conj arg)))))))
+
+(run! ignore trace-json)
+
+;; (prn @ignored)
+;; (prn @unignored)
+
+(defn process-1 [{:keys [:name] :as m}]
+  (when-not (and (= 1 (count m))
+                 (contains? @ignored name)
+                 (not (contains? @unignored name)))
+    ;; fix bug(?) in automated generated config
+    (if (= "java.lang.reflect.Method" name)
+      (assoc m :name "java.lang.reflect.AccessibleObject")
+      m)))
+
+(def config-json (cheshire/parse-string (slurp "reflect-config.json") true))
+
+(def cleaned (keep process-1 config-json))
+
+(spit "reflect-config-cleaned.json" (cheshire/generate-string cleaned {:pretty true}))
+
+#+end_src
+
+** readme
+#+BEGIN_SRC markdown :tangle ./readme.md
+<img src="https://github.com/adam-james-v/svg-clj/blob/main/examples/quilt.png" alt="A colourful render of a quilt design" width="300">
+
+# Radish
+A kinda-cool org-mode -> interactive blog post tool written with and for Clojure(script).
+
+## Why Radish?
+A friend sent me a meme about radishes while I was thinking of a name for this project. I chuckled, then figured it's a good enough name for a small project like this.
+
+#+END_SRC
+
+* design
+The goal of this tool is to create a publishable directory (html, js, css combo) from an org-mode file containing Clojure(script) code blocks.
+
+The idea is to make a graalvm native-image tool that takes the org file and emits the directory with everything that is necessary to run things client-side in a browser.
+
+To do this, the following things have to happen:
+
+ - parse org-mode file
+ - exclude all exclusion tags, clean up any weirdness
+ - extract all clj/cljs dependencies
+ - convert into hiccup structure
+ - build cljs project (from template?)
+ - compile cljs project, including all necessary js, css in output dir
+
+* resources
+** css
+#+BEGIN_SRC css :tangle ./resources/style.css
+html {
+  background: #ffecdc;
+}
+
+#root {
+  margin: 0;
+  padding: 0;
+}
+
+,*, *:after, *:before {
+  box-sizing: border-box;
+}
+
+body {
+  font: 17px/1.375 Georgia, "Times New Roman", Times, serif;
+  width: 100%;
+  margin: 0;
+}
+
+main {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 20px 0 100px 0;
+  color: #222;
+}
+
+@media only screen and (max-width: 600px) {
+  main {
+    margin: 0 12px;
+  }
+}
+
+header {
+  color: #fef;
+  font-size: 1.75em;
+  width: 100%;
+  height: 280px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  background-image: linear-gradient(to bottom right, #ffbae1, #bd6cea);
+  box-shadow: inset 0px -15px 28px -15px #444;
+}
+
+header h1 {
+  text-shadow: 1px 1px rgba(250,250,250,0.1);
+  background: linear-gradient(to top right, #ff42b4, #5671ff);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+footer {
+  color: #fef;
+  width: 100%;
+  height: 280px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-flow: column;
+  background-image: linear-gradient(to bottom right, #bd6cea, #ffbae1);
+  box-shadow: inset 0px 15px 28px -15px #444;
+  text-shadow: 1px 1px rgba(0,0,0,0.4);
+}
+                
+.code-container {
+  font-size: 14px;
+  max-width: 500px;
+  margin: 35px auto;
+  border-radius: 11px 11px 11px 11px;
+  box-shadow: 0px 2px 8px 0px rgba(20, 20, 20, 0.2);
+  -moz-box-shadow: 0px 2px 8px 0px rgba(20, 20, 20, 0.2);
+  -webkit-box-shadow: 0px 2px 8px 0px rgba(20, 20, 20, 0.2);
+  -o-box-shadow: 0px 2px 8px 0px rgba(20, 20, 20, 0.2);
+}
+
+.code-container pre {
+  margin-top: 0;
+}
+
+.CodeMirror {
+  padding-top: 10px;
+  border-radius: 11px 11px 0 0;
+}
+
+.result {
+  background: rgba(120,120,120,0.15);
+  max-height: 400px;
+  overflow: auto;
+}
+
+pre {
+  padding: 12px;
+  white-space: pre-wrap;
+}
+
+table, input {
+  font-size: 16px;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  line-height: 1.2;
+}
+
+table {
+  border-spacing: 0;
+  border-collapse: collapse;
+  text-align: left;
+  padding-bottom: 25px;
+  width: auto;
+}
+
+th, td {
+  vertical-align: top;
+  padding: 5px;
+  border: 1px solid #ddd;
+}
+
+table ul {
+  list-style-type: none;
+  padding-left: 4px;
+  margin: 0;
+}
+
+table p {
+  margin: 0;
+}
+
+td, th {
+  padding: 5px;
+  vertical-align: bottom;
+}
+
+td, th, hr {
+  border-bottom: 1px solid #ddd;
+}
+
+hr {
+  border: 0;
+  margin: 25px 0;
+}
+
+.hidden {
+  display: none;
+}
+
+a {
+  color: #5671ff;
+  text-decoration: none;
+}
+
+a:hover {
+  color: #ff42b4;
+  text-decoration: underline;
+}
+
+button, select {
+  font-size: 14px;
+  background: #ddd;
+  border: 0;
+  padding: 9px 20px;
+}
+
+input {
+  padding: 3px;
+  vertical-align: bottom;
+}
+
+button:hover {
+  background: #eee;
+}
+
+textarea {
+  border-color: #ccc;
+}
+#+END_SRC
+
+** scittle-script
+This script is used in a basic site output, when there is no need to grab external dependencies.
+
+#+begin_src clojure :tangle ./resources/code-runner.cljs
+(require '[reagent.core :as r]
+         '[reagent.dom :as rdom])
+
+(defn editor
+  [id state]
+  (let [lines (str/split-lines @state)
+        cm (.fromTextArea  js/CodeMirror
+                           (.getElementById js/document id)
+                           #js {:mode "clojure"
+                                :theme "nord"
+                                :lineNumbers true
+                                :smartIndent true
+                                :tabSize 2})]
+    (.on cm "change" (fn [_ _]
+                       (reset! state (.getValue cm))))
+    (.setSize cm "auto" "auto")))
+
+(defn renderable-element?
+  [elem]
+  (and (vector? elem)
+       (keyword? (first elem))
+       (not= (str (first elem)) ":")
+       (not (re-matches #"[0-9]+" (name (first elem))))
+       (not (re-matches #".*[\W]+" (name (first elem))))))
+
+(defn renderable?
+  [elem]
+  (when (or (renderable-element? elem) (seq? elem))
+    (let [[k props content] elem
+          [props content] (if (and (nil? content)
+                                   (not (map? props)))
+                            [nil props]
+                            [props content])]
+      (cond
+        (seq? elem) (not (empty? (filter renderable? elem)))
+        (seq? content) (not (empty? (filter renderable? content)))
+        :else (or (renderable-element? content)
+                  (renderable-element? elem)
+                  (string? content)
+                  (number? content))))))
+
+(defn result-component
+  [state]
+  (fn [state]
+    (let [result (try (js/scittle.core.eval_string @state)
+                      (catch :default e
+                        (.-message e)))]
+      [:div.result
+       [:pre
+        [:div "RESULT:"]
+        [:code (if result (str result) "nil")]
+        (when (renderable? result) [:div result])]])))
+
+(defn run-src
+  [elem]
+  (let [id (gensym "src-")
+        src-str (.-innerText elem)
+        parent (.-parentNode elem)
+        state (r/atom src-str)]
+    (rdom/render [:textarea {:id id} src-str] parent)
+    (editor id state)
+    (rdom/render [result-component state] parent)))
+
+(defn run! []
+  (let [blocks (vec (.getElementsByClassName js/document "src-clojure"))]
+    (mapv run-src blocks)))
+
+(run!)
+#+end_src
+
+* main
+** ns
+#+begin_src clojure :tangle ./src/radish/main.clj
+(ns radish.main
+  (:require [clojure.string :as str]
+            [clojure.zip :as zip]
+            [clojure.java.shell :refer [sh]]
+            [clojure.tools.cli :as cli]
+            [hiccup.core :refer [html]]
+            [hiccup.page :as page]
+            [orgmode.core :as org]
+            [orgmode.html :refer [hiccupify *user-src-fn*]])
+  (:gen-class))
+#+end_src
+
+** utils
+#+begin_src clojure :tangle ./src/radish/main.clj
+(defn find-title
+  [org-str]
+  (let [lines (str/split-lines org-str)
+        f #(str/starts-with? (str/upper-case %) "#+TITLE")
+        title (->> lines
+                   (filter f)
+                   first)]
+     (str/join " "
+               (if title
+                 (-> title (str/split #" ") rest)
+                 (-> (first lines) (str/split #" ") rest)))))
+
+(defn safe-name
+  [title]
+  (-> title
+      str/lower-case
+      (str/replace #";" "-")
+      (str/replace #" " "-")))
+
+(defn find-author
+  [org-str]
+  (let [lines (str/split-lines org-str)
+        f #(str/starts-with? (str/upper-case %) "#+AUTHOR")
+        title (->> lines
+                   (filter f)
+                   first)]
+    (when title
+      (str/join " " (-> title (str/split #" ") rest)))))
+
+#+end_src
+
+** tree-edit
+#+begin_src clojure :tangle ./src/radish/main.clj
+;; https://ravi.pckl.me/short/functional-xml-editing-using-zippers-in-clojure/
+(defn tree-edit
+  [zipper matcher editor]
+  (loop [loc zipper]
+    (if (zip/end? loc)
+      (zip/root loc)
+      (if-let [matcher-result (matcher loc)]
+        (let [new-loc (zip/edit loc editor)]
+          (if (not (= (zip/node new-loc) (zip/node loc)))
+            (recur (zip/next new-loc))))
+        (recur (zip/next loc))))))
+
+(defn match-result?
+  [loc]
+  (let [node (zip/node loc)
+        s (-> node :content first)]
+    (when s
+      (str/starts-with?
+       (str/upper-case s)
+       "#+RESULT"))))
+
+(defn remove-result
+  [node]
+  (let [new-content (drop 2 (:content node))]
+    (assoc node :content (vec new-content))))
+
+(defn remove-results
+  [org]
+  (let [org-zipper (org/zip org)]
+    (tree-edit org-zipper match-result? remove-result)))
+
+#+end_src
+
+** basic-build
+#+begin_src clojure :tangle ./src/radish/main.clj
+(defn org->site
+  [org-str]
+  (let [title (find-title org-str)
+        author (find-author org-str)
+        org-content
+        [:body
+         [:header [:h1 title]]
+         [:main (-> org-str
+                    org/parse-str
+                    remove-results
+                    hiccupify)]
+         [:footer
+          (when author
+            [:p "Written by " [:span {:style {:font-style "italic"}} author]])
+          [:p "Generated by "
+           [:span {:style {:font-weight "bold"}}
+            [:a {:href "https://github.com/adam-james-v/radish"} "radish"]]]]]]
+    (page/html5
+     [:head
+      [:meta {:charset "utf-8"}]
+      [:title title]
+      (page/include-css
+       "style.css"
+       "codemirror.css"
+       "nord.css")
+      (page/include-js
+       "codemirror.js"
+       "clojure.js")
+      (page/include-js
+       "https://cdn.jsdelivr.net/gh/borkdude/scittle@0.0.2/js/scittle.js"
+       "https://unpkg.com/react@17/umd/react.production.min.js"
+       "https://unpkg.com/react-dom@17/umd/react-dom.production.min.js"
+       "https://cdn.jsdelivr.net/gh/borkdude/scittle@0.0.2/js/scittle.reagent.js")
+      [:script {:type "application/x-scittle"}
+       (slurp (clojure.java.io/resource "code-runner.cljs"))]]
+     org-content)))
+
+(defn src-fn
+  [x]
+  (let [class (str "src-" (first (:attribs x)))]
+    [:div.code-container
+     [:pre {:class class} (str/join "\n" (:content x))]]))
+
+(defn basic-build!
+  [org-str]
+  (let [name (safe-name (find-title org-str))
+        index (binding [*user-src-fn* src-fn] (org->site org-str))]
+    (sh "mkdir" "-p" name)
+    (doseq [file ["style.css"
+                  "codemirror.css"
+                  "nord.css"
+                  "codemirror.js"
+                  "clojure.js"]]
+      (spit (str name "/" file) (slurp (clojure.java.io/resource file))))
+    (spit (str name "/index.html") index)
+    ;; sh uses futures in different threads, so shut them down
+    (shutdown-agents)))
+
+#+end_src
+
+** cli
+#+begin_src clojure :tangle ./src/radish/main.clj
+(def cli-options
+  [["-i" "--infile FNAME" "The file to be compiled."
+    :default nil]
+   ["-h" "--help"]])
+
+(defn -main
+  [& args]
+  (let [parsed (cli/parse-opts args cli-options)
+        {:keys [:infile :help]} (:options parsed)
+        [in _] (when infile (str/split infile #"\."))]
+    (cond
+      help
+      (do (println "Usage:")
+          (println (:summary parsed)))
+          
+      (nil? infile)
+      (println "Please specify an input file")
+      
+      :else
+      (let [org-str (slurp infile)
+            outdir (safe-name (find-title org-str))
+            msg (str "Compiling " infile " into directory " outdir ".")]
+        (println msg)
+        (basic-build! org-str)
+        (println "Success! Have a nice day :)")))))
+#+end_src
