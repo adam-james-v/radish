@@ -243,6 +243,30 @@ If you don't have or want to use Babashka, the following commands should work:
 
 Radish will create a directory in the same dir as the org file, with a name derived from the Title of the org file. Inside will be all necessary .js and .css files alongside a generated index.html. You should be able to upload this directory to your site and have a working page.
 
+## Compiling to Native Image
+You can compile this project with GraalVM's native-image.
+
+First, make sure you have GraalVM / native-image installed, then set your env variables:
+
+```
+export GRAALVM_HOME=/Users/adam/Downloads/graalvm-ce-java11-21.1.0/Contents/Home
+export JAVA_HOME=$GRAALVM_HOME 
+
+```
+
+NOTE: Change the path to match where you've downloaded/installed GraalVM
+
+Then, run the native-image task with Babashka.
+
+`bb native-image`
+
+If the build succeeds, you should find the binary in `build/radish`.
+
+NOTE: This is still fairly new territory for me, so the build script(s) could likely be cleaned up a bit yet. However, the final binary should work the same as the src or uberjar.
+
+`./radish -i your-org-file.org`
+
+
 ## Current Limitations
 The only build method so far is 'basic-build', which relies on a simple script executed in your browser by scittle after the page loads. It has no dependency loading capabilities and thus is limited to executing Clojurescript code that only relies on core libraries.
 
