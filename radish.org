@@ -225,6 +225,7 @@ If you don't have or want to use Babashka, the following commands should work:
  - `clojure -X:uberjar` -> build the uberjar
  - `java -jar radish.jar -i your-org-file.org` -> run the uberjar, as stated previously.
 
+Radish will create a directory in the same dir as the org file, with a name derived from the Title of the org file. Inside will be all necessary .js and .css files alongside a generated index.html. You should be able to upload this directory to your site and have a working page.
 
 ## Current Limitations
 The only build method so far is 'basic-build', which relies on a simple script executed in your browser by scittle after the page loads. It has no dependency loading capabilities and thus is limited to executing Clojurescript code that only relies on core libraries.
