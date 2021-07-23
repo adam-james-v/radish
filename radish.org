@@ -233,8 +233,6 @@ Once you've built the uberjar, you can use it via:
 
 `java -jar radish.jar -i your-org-file.org`
 
-I am working on a GraalVM native image, but that's not quite working yet.
-
 If you don't have or want to use Babashka, the following commands should work:
 
  - `clojure -M -m radish.main -i your-org-file.org` -> run the src with clojure
@@ -265,7 +263,6 @@ If the build succeeds, you should find the binary in `build/radish`.
 NOTE: This is still fairly new territory for me, so the build script(s) could likely be cleaned up a bit yet. However, the final binary should work the same as the src or uberjar.
 
 `./radish -i your-org-file.org`
-
 
 ## Current Limitations
 The only build method so far is 'basic-build', which relies on a simple script executed in your browser by scittle after the page loads. It has no dependency loading capabilities and thus is limited to executing Clojurescript code that only relies on core libraries.
