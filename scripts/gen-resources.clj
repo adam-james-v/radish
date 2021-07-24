@@ -1,6 +1,7 @@
 #!/usr/bin/env bb
 
 (require '[babashka.process :refer [process]]
+         '[babashka.fs :as fs]
          '[cheshire.core :as cheshire]
          '[clojure.string :as str]
          '[clojure.java.shell :refer [sh]])
@@ -14,6 +15,16 @@
 @(process trace-cmd {:inherit true :extra-env {"JAVA_TOOL_OPTIONS" config-agent-env}})
 
 (def trace-json (cheshire/parse-string (slurp "trace-file.json") true))
+
+;; [Z = boolean
+;; [B = byte
+;; [S = short
+;; [I = int
+;; [J = long
+;; [F = float
+;; [D = double
+;; [C = char
+;; [L = any non-primitives(Object)
 
 (defn normalize-array-name [n]
   ({"[F" "float[]"
@@ -61,5 +72,6 @@
 
 (def cleaned (keep process-1 config-json))
 
+(sh "mkdir" "-p" "build/tmp")
 (spit "build/tmp/reflect-config-cleaned.json" (cheshire/generate-string cleaned {:pretty true}))
 (shutdown-agents)

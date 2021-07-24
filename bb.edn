@@ -17,16 +17,16 @@
    :depends [uberjar]
    :task (apply shell "java -jar radish.jar" *command-line-args*)}
   
-  graalvm
+  -graalvm
   {:doc "Checks GRAALVM_HOME env var"
    :task
    (let [env (System/getenv "GRAALVM_HOME")]
      (assert "Set GRAALVM_HOME")
      env)}
   
-  gen-reflect-config
+  -gen-reflect-config
   {:doc "Runs scripts/gen-reflect-config.clj on the compiled jar."
-   :depends [graalvm uberjar]
+   :depends [-graalvm uberjar]
    :task (binding [*command-line-args* ["java" "-jar" "radish.jar" "-i" "radish-basic.org"]]
            (load-file "scripts/gen-reflect-config.clj"))}
 
@@ -41,15 +41,16 @@
 
   native-image
   {:doc "Builds native image"
-   :depends [-clean-build graalvm uberjar gen-reflect-config]
+   :depends [-clean-build -graalvm uberjar -gen-reflect-config]
    :task (do
-           (shell (str (fs/file graalvm
+           (shell "mkdir" "-p" "build/tmp")
+           (shell (str (fs/file -graalvm
                                 "bin"
                                 (if windows?
                                   "gu.cmd"
                                   "gu")))
                   "install" "native-image")
-           (shell (str (fs/file graalvm
+           (shell (str (fs/file -graalvm
                                 "bin"
                                 (if windows?
                                   "native-image.cmd"

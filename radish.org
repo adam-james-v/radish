@@ -58,16 +58,16 @@
    :depends [uberjar]
    :task (apply shell "java -jar radish.jar" *command-line-args*)}
   
-  graalvm
+  -graalvm
   {:doc "Checks GRAALVM_HOME env var"
    :task
    (let [env (System/getenv "GRAALVM_HOME")]
      (assert "Set GRAALVM_HOME")
      env)}
   
-  gen-reflect-config
+  -gen-reflect-config
   {:doc "Runs scripts/gen-reflect-config.clj on the compiled jar."
-   :depends [graalvm uberjar]
+   :depends [-graalvm uberjar]
    :task (binding [*command-line-args* ["java" "-jar" "radish.jar" "-i" "radish-basic.org"]]
            (load-file "scripts/gen-reflect-config.clj"))}
 
@@ -82,15 +82,16 @@
 
   native-image
   {:doc "Builds native image"
-   :depends [-clean-build graalvm uberjar gen-reflect-config]
+   :depends [-clean-build -graalvm uberjar -gen-reflect-config]
    :task (do
-           (shell (str (fs/file graalvm
+           (shell "mkdir" "-p" "build/tmp")
+           (shell (str (fs/file -graalvm
                                 "bin"
                                 (if windows?
                                   "gu.cmd"
                                   "gu")))
                   "install" "native-image")
-           (shell (str (fs/file graalvm
+           (shell (str (fs/file -graalvm
                                 "bin"
                                 (if windows?
                                   "native-image.cmd"
@@ -108,6 +109,8 @@
 #+end_src
 
 ** build-resources
+Use these scripts to help with the native-image build process. Jar/uberjar builds work just fine with bb tasks already.
+
 *** gen-reflect-script
 Use these scripts to help with the native-image build process. Jar/uberjar builds work just fine with bb tasks already.
 
@@ -134,16 +137,6 @@ This script takes a reflect-config.json and cleans it up by removing unnecessary
 @(process trace-cmd {:inherit true :extra-env {"JAVA_TOOL_OPTIONS" config-agent-env}})
 
 (def trace-json (cheshire/parse-string (slurp "trace-file.json") true))
-
-;; [Z = boolean
-;; [B = byte
-;; [S = short
-;; [I = int
-;; [J = long
-;; [F = float
-;; [D = double
-;; [C = char
-;; [L = any non-primitives(Object)
 
 (defn normalize-array-name [n]
   ({"[F" "float[]"
@@ -191,7 +184,6 @@ This script takes a reflect-config.json and cleans it up by removing unnecessary
 
 (def cleaned (keep process-1 config-json))
 
-(sh "mkdir" "-p" "build/tmp")
 (spit "build/tmp/reflect-config-cleaned.json" (cheshire/generate-string cleaned {:pretty true}))
 (shutdown-agents)
 #+end_src
@@ -492,8 +484,9 @@ This script is used in a basic site output, when there is no need to grab extern
   (and (vector? elem)
        (keyword? (first elem))
        (not= (str (first elem)) ":")
-       (not (re-matches #"[0-9]+" (name (first elem))))
-       (not (re-matches #".*[\W]+" (name (first elem))))))
+       (not (str/includes? (str (first elem)) "/"))
+       (not (re-matches #"[0-9.#].*" (name (first elem))))
+       (re-matches #"[a-zA-Z0-9.#]+" (name (first elem)))))
 
 (defn renderable?
   [elem]
@@ -717,15 +710,67 @@ This script is used in a basic site output, when there is no need to grab extern
 * tests
 Run the tests and see results in the org file:
 
-#+begin_src bash :results output
+#+begin_src bash
 clj -M:test
 #+end_src
 
+** code-runner
+The code-runner is only run in browser, but should still have a few tests.
+
+#+begin_src clojure :tangle ./test/radish/code_runner_test.clj
+(ns radish.code-runner-test
+  (:require [clojure.test :as t :refer [deftest is]]
+            [clojure.string :as str]))
+
+;; cheeky hack to get two fns from the script
+(def code-runner-src
+  (let [src-str (str/replace
+                 (slurp "resources/code-runner.cljs") #"#js" "")]
+    (filter
+     (fn [[_ sym & _]]
+       (#{'renderable-element?
+          'renderable?} sym))
+     (read-string (str "[" src-str "]")))))
+
+(doseq [f code-runner-src] (eval f))
+
+(deftest renderable
+  (is (renderable? [:asdf]))
+  (is (renderable? [:circle {:r 20}]))
+  (is (renderable? [:p]))
+  (is (renderable? [:p "hello"]))
+  (is (renderable? [:p {:style {:color "blue"}} "hello"]))
+  (is (renderable? [:div [:p "hello"]]))
+  (is (renderable? [:div (repeat 10 [:p "hello"])]))
+  (is (not (renderable? [])))
+  (is (not (renderable? [:3 "weird"])))
+  (is (not (renderable? [:!ab "weird"])))
+  (is (not (renderable? [:a!b "weird"])))
+  (is (not (renderable? [:ab! "weird"])))
+  (is (not (renderable? [:a$b "weird"])))
+  (is (not (renderable? [:ab$ "weird"])))
+  (is (not (renderable? [:a%b "weird"])))
+  (is (not (renderable? [:ab% "weird"])))
+  (is (not (renderable? [:a&b "weird"])))
+  (is (not (renderable? [:ab& "weird"])))
+  (is (not (renderable? [:a*b "weird"])))
+  (is (not (renderable? [:ab* "weird"])))
+  (is (not (renderable? [:a|b "weird"])))
+  (is (not (renderable? [:ab| "weird"])))
+  (is (not (renderable? [:a/b "weird"])))
+  (is (not (renderable? (list :p "hi"))))
+  (is (not (renderable? ["asdf" "wasd"])))
+  (is (not (renderable? [[:p "hi"]])))
+  (is (not (renderable? [[:p "hi"] [:p "hello"]]))))
+
+#+end_src
+
+** main
 #+begin_src clojure :tangle ./test/radish/main_test.clj
 (ns radish.main-test
   (:require [clojure.test :as t :refer [deftest is]]
             [radish.main :as rad]))
 
-(deftest asdf (is (= true true)))
+(deftest asdf (is true))
 
 #+end_src

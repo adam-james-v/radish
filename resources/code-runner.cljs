@@ -20,8 +20,9 @@
   (and (vector? elem)
        (keyword? (first elem))
        (not= (str (first elem)) ":")
-       (not (re-matches #"[0-9]+" (name (first elem))))
-       (not (re-matches #".*[\W]+" (name (first elem))))))
+       (not (str/includes? (str (first elem)) "/"))
+       (not (re-matches #"[0-9.#].*" (name (first elem))))
+       (re-matches #"[a-zA-Z0-9.#]+" (name (first elem)))))
 
 (defn renderable?
   [elem]
