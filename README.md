@@ -1,3 +1,5 @@
+<img src="https://github.com/adam-james-v/radish/blob/main/doc/radish.svg" alt="A flat-style vecor illustration of a radish." width="300">
+
 # Radish
 A kinda-cool org-mode -> interactive blog post tool written with and for Clojure(script).
 
