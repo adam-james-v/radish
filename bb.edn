@@ -12,6 +12,9 @@
    :task (when (seq (fs/modified-since "radish.jar" "src"))
            (clojure "-X:uberjar"))}
 
+  -shadow
+  {:task (clojure "-M:dev -m shadow.cljs.devtools.cli release main")}
+
   run-uber
   {:doc "Run uberjar"
    :depends [uberjar]

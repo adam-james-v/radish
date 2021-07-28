@@ -1,0 +1,202 @@
+* radish-logo
+#+Title: Radish Logo
+#+AUTHOR: Adam James
+#+STARTUP: overview
+#+HTML_DOCTYPE: html5
+#+OPTIONS: toc:nil num:nil html-style:nil html-postamble:nil html-preamble:nil html5-fancy:t
+#+PROPERTY: header-args :cache yes :noweb yes :results value :mkdirp yes :padline yes :async
+
+A small literate program that generates the Radish Logo.
+
+* deps
+#+begin_src clojure :tangle ./deps.edn
+{:deps
+  {io.github.adam-james-v/svg-clj {:mvn/version "0.0.3-SNAPSHOT"}
+   hiccup/hiccup                  {:mvn/version "2.0.0-alpha2"}}}
+
+#+end_src
+
+* ns
+#+NAME: ns
+#+begin_src clojure :results silent
+(ns radish-logo.draw
+  (:require [svg-clj.utils :as utils]
+            [svg-clj.elements :as el]
+            [svg-clj.transforms :as tf]
+            [svg-clj.composites :as comp :refer [svg]]
+            [svg-clj.path :as path]
+            [svg-clj.parametric :as p]
+            [svg-clj.layout :as lo]
+            [hiccup.core :refer [html]]
+            [clojure.java.shell :refer [sh]]))
+#+end_src
+
+* utils
+As I was writing this project, a few utility functions became necessary. In general, I don't overthink document structure while I am writing out my main program. Instead, I write notes and code as ideas and solutions pop into my brain. As intent and methodology is discovered through iteration, I can then more confidently structure the document. This means both re-arranging code blocks AND adding or removing prose to clarify intent.
+
+This is, in short, a living document. At least up until publish time.
+
+** svg
+Make an SVG function. It turns out that you can natively display SVG in emacs. This lets us export SVG to a file and immediately display it as a code block result. The svg! fn helps with this.
+
+This is a side-effecting function that writes a file to the same directory as this org file. If you want to control where images are saved, you can change this function and/or the fn calls to save into a directory structure of your choosing.
+
+The file name is returned as a symbol so that org-mode correctly inserts an inline image link to that filename. If you return it as a string, org-mode incorrectly has double quotes around the filename, resulting in no display of the image.
+
+#+NAME: svg
+#+begin_src clojure :results value
+(defn svg!
+  [svg-data fname]
+  (let [svg-data (if (= (first svg-data) :svg)
+                   svg-data
+                   (svg svg-data))]
+    (spit fname (html svg-data))
+    (symbol fname)))
+
+#+end_src
+
+#+RESULTS[8e468fdb3a23b57f5fa3e7cdf677da723f42e789]: svg
+: #'radish-logo.draw/svg!
+
+** flip-y
+A helper fn that multiplies every pt by [1 -1] to mirror along the x axis.
+
+#+begin_src clojure :results value
+(defn flip-y
+  [pts]
+  (mapv #(utils/v* % [1 -1]) pts))
+
+(defn flip-x
+  [pts]
+  (mapv #(utils/v* % [-1 1]) pts))
+
+#+end_src
+
+#+RESULTS[23d99d7f1f3abf9cbee122e8f17633a2e3b6e00d]: flip-y
+| #'radish-logo.draw/flip-y |
+| #'radish-logo.draw/flip-x |
+
+* drawing
+
+#+begin_src clojure :results value :tangle ./radish.clj
+(defn bulb
+  [cpts]
+  (let [beza (apply path/bezier cpts)
+        bezb (apply path/bezier (flip-y cpts))
+        lt (path/line (first cpts) (first (flip-y cpts)))
+        lb (path/line (last cpts) (last (flip-y cpts)))
+        shape (tf/merge-paths beza bezb)
+        ctr (tf/centroid shape)]
+    (-> shape
+        (tf/rotate 270)
+        (tf/translate (utils/v* ctr [-1 -1])))))
+
+(defn leaf
+  [h & {:keys [mirror] :or {mirror false}}]
+  (let [m (if mirror -1 1)
+        main-pts [[0 0] [(* 0.125 h m) (* 0.275 h)] [0 h]]
+        main (apply path/bezier main-pts)
+        swoop-pts [[0 (* 0.125 h)]         [(* 0.03 h m) (* -0.15 h)]
+                   [(* 0.2125 h m) (* -0.175 h)] [(* 0.3 h m) 0]]
+        swoop (-> (apply path/bezier swoop-pts)
+                  (tf/translate (utils/v* [(* -1) -1] (last swoop-pts))))]
+    (tf/merge-paths
+     main
+     swoop
+     (-> swoop (tf/rotate (* 270 m)) (tf/translate [(* -0.1375 h m) (* 0.315 h)]))
+     (-> (apply path/bezier (drop-last swoop-pts))
+         (tf/rotate (* 315 m)) (tf/translate [(* -0.175 h m) (* 0.515 h)]))
+     (-> (apply path/bezier (drop-last swoop-pts))
+         (tf/rotate (* 330 m)) (tf/translate [(* -0.1 h m) (* 0.825 h)])))))
+
+(defn linear-gradient
+  [deg col-a col-b]
+  (let [[x1 y1] (utils/rotate-pt-around-center [0 50] deg [50 50])
+        [x2 y2] (utils/rotate-pt-around-center [100 50] deg [50 50])
+        id (gensym "gradient-")]
+    [:linearGradient {:id id
+                      :x1 (str x1 "%")
+                      :y1 (str y1 "%")
+                      :x2 (str x2 "%")
+                      :y2 (str y2 "%")}
+     [:stop {:offset "0%" :stop-color col-a}]
+     [:stop {:offset "100%" :stop-color col-b}]]))
+
+#+end_src
+
+#+RESULTS[f802464f326e5fffbda565a2ab10d26087ff608d]:
+| #'radish-logo.draw/bulb            |
+| #'radish-logo.draw/leaf            |
+| #'radish-logo.draw/linear-gradient |
+
+#+begin_src clojure :results value :tangle ./radish.clj
+(def radish-bulb
+  (let [gradient (linear-gradient 230 "rgb(244,131,120)" "rgb(235,120,196)")
+        gradient-id (get-in gradient [1 :id])
+        shadows (tf/merge-paths
+                 (-> (path/line [0 0] [10 10]) (tf/translate [12 30]))
+                 (-> (path/line [0 0] [6 6]) (tf/translate [28 26]))
+                 (-> (path/line [0 0] [6 6]) (tf/translate [7 45]))
+                 (-> (path/line [0 0] [3 3]) (tf/translate [-31 -21])))
+        roots (tf/merge-paths
+               (path/bezier [0 61] [-8 71] [0 84]))]
+    (-> (bulb [[0 0] [45 75] [90 50] [102 0]])
+        (tf/merge-paths shadows roots)
+        (tf/style {:fill "none"
+                   :stroke-width 7
+                   :stroke-linecap "round"
+                   :stroke (str "url(#" gradient-id ")")})
+        (->> (list [:defs gradient])))))
+#+end_src
+
+#+RESULTS[095f0afb9fde91550d3dbc4f8f2e72452599e26c]:
+: #'radish-logo.draw/radish-bulb
+
+#+begin_src clojure :results value :tangle ./radish.clj
+(def radish-leaves
+  (let [gradient (linear-gradient 103 "rgb(120,202,106)" "rgb(182,192,174)")
+        gradient-id (get-in gradient [1 :id])]
+    (->
+     (tf/merge-paths
+      (-> (leaf 80 :mirror true) (tf/rotate 3) (tf/translate [-2 -145]))
+      (-> (leaf 100 :mirror true) (tf/rotate 12) (tf/translate [14 -97]))
+      (-> (leaf 160 :mirror false) (tf/rotate -11) (tf/translate [-20 -158])))
+     (tf/style {:fill "none"
+                :stroke-width 6
+                :stroke-linecap "round"
+                :stroke (str "url(#" gradient-id ")")})
+     (->> (list [:defs gradient])))))
+#+end_src
+
+#+RESULTS[c51a0967154a120aa184beb9ded1e473aebbf0b0]:
+: #'radish-logo.draw/radish-leaves
+
+
+
+#+begin_src clojure :results file :tangle ./radish.clj
+(let [[[_ leaves-grad] leaves] radish-leaves
+      [[_ bulb-grad] bulb] radish-bulb]
+  (-> (el/g
+       #_(-> (el/rect 500 500)
+           (tf/style {:fill "lavender"}))
+       leaves
+       (-> bulb (tf/translate [0 38]) (tf/style {:fill "rgba(244,131,120,0.2)"})))
+      (tf/translate [200 220])
+      (->> (list [:defs leaves-grad bulb-grad]))
+      (svg 400 400)
+      (svg! "radish.svg")))
+#+end_src
+
+#+RESULTS[7c8f071530f4d768475793c380f6cd377467819c]:
+[[file:radish.svg]]
+
+* other-ns
+This is jsut to see if I can grab multiple NS declarations.
+
+#+begin_src clojure
+(ns radish-logo.misc
+  (:require [clojure.string :as str]))
+
+(str/join " " ["Some" "thing"])
+
+#+end_src

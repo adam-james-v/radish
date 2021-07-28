@@ -1,12 +1,14 @@
 (ns radish.main
   (:require [clojure.string :as str]
             [clojure.zip :as zip]
-            [clojure.java.shell :refer [sh]]
+            [clojure.java.shell :refer [sh with-sh-dir]]
             [clojure.tools.cli :as cli]
             [hiccup.core :refer [html]]
             [hiccup.page :as page]
             [orgmode.core :as org]
-            [orgmode.html :refer [hiccupify *user-src-fn*]])
+            [orgmode.html :refer [hiccupify *user-src-fn*]]
+            [shadow.cljs.devtools.api :as shadow]
+            [shadow.cljs.devtools.server :as server])
   (:gen-class))
 
 ;; https://ravi.pckl.me/short/functional-xml-editing-using-zippers-in-clojure/
@@ -47,6 +49,17 @@
         {:keys [type text]} node]
     (and (= type :headline)
          (str/starts-with? text "deps"))))
+
+(defn match-ns?
+  [loc]
+  (let [node (zip/node loc)
+        {:keys [type content]} node
+        fl (->> content
+                (filter string?)
+                (filter #(not= (str/trim %) ""))
+                first)]
+    (and (= type :block)
+         (str/starts-with? fl "(ns"))))
 
 (defn match-headlines?
   [loc]
@@ -97,17 +110,6 @@
   (when title
     (str/join " " (-> title (str/split #" ") rest)))))
 
-(defn find-deps
-  [org-str]
-  (-> org-str
-      org/parse-str
-      org/zip
-      (get-nodes match-deps?)
-      (get-in [0 :content 0 :content])
-      (->> (apply str))
-      read-string
-      (#(apply dissoc % (remove #{:deps} (keys %))))))
-
 (defn src-fn
   [x]
   (let [class (str "src-" (first (:attribs x)))]
@@ -132,29 +134,41 @@
         [:a {:href "https://github.com/adam-james-v/radish"} "radish"]]]])))
 
 (defn org->site
-  [org-str]
-  (let [title (find-title org-str)
-        author (find-author org-str)
-        org-content (into [:body] (org-content org-str))]
-    (page/html5
-     [:head
-      [:meta {:charset "utf-8"}]
-      [:title title]
-      (page/include-css
-       "style.css"
-       "codemirror.css"
-       "nord.css")
-      (page/include-js
-       "codemirror.js"
-       "clojure.js")
-      (page/include-js
-       "https://cdn.jsdelivr.net/gh/borkdude/scittle@0.0.2/js/scittle.js"
-       "https://unpkg.com/react@17/umd/react.production.min.js"
-       "https://unpkg.com/react-dom@17/umd/react-dom.production.min.js"
-       "https://cdn.jsdelivr.net/gh/borkdude/scittle@0.0.2/js/scittle.reagent.js")
-      [:script {:type "application/x-scittle"}
-       (slurp (clojure.java.io/resource "code-runner.cljs"))]]
-     org-content)))
+  ([org-str] (org->site org-str nil))
+  ([org-str advanced?]
+   (let [title (find-title org-str)
+         author (find-author org-str)
+         org-content (into [:body] (org-content org-str))
+         code-runner-str (slurp (clojure.java.io/resource "code-runner.cljs"))]
+     (page/html5
+      [:head
+       [:meta {:charset "utf-8"}]
+       [:title title]
+       (page/include-css
+        "style.css"
+        "codemirror.css"
+        "nord.css")
+       (page/include-js
+        "codemirror.js"
+        "clojure.js")
+       ;; Always include React and ReactDOM
+       (page/include-js
+        "https://unpkg.com/react@17/umd/react.production.min.js"
+        "https://unpkg.com/react-dom@17/umd/react-dom.production.min.js")
+       (if advanced?
+         ;; include compiled js
+         (page/include-js
+          "radish.js"
+          "radish.reagent.js")
+         ;; use scittle for basic build
+         (page/include-js
+          "https://cdn.jsdelivr.net/gh/borkdude/scittle@0.0.2/js/scittle.js"
+          "https://cdn.jsdelivr.net/gh/borkdude/scittle@0.0.2/js/scittle.reagent.js"))
+       [:script {:type "application/x-scittle"}
+        (if advanced?
+          (str/replace code-runner-str "js/scittle.core.eval_string" "js/radish.core.eval_string")
+          code-runner-str)]]
+      org-content))))
 
 (defn basic-build!
   [org-str]
@@ -166,62 +180,167 @@
                   "nord.css"
                   "codemirror.js"
                   "clojure.js"]]
-      (spit (str name "/" file) (slurp (clojure.java.io/resource file))))
-    (spit (str name "/index.html") index)
-    ;; sh uses futures in different threads, so shut them down
-    (shutdown-agents)))
+      (spit (str name "/" file) (slurp (clojure.java.io/resource (str "shared/" file)))))
+    (spit (str name "/index.html") index)))
 
-#_(def a (slurp "/Users/adam/design/radish-logo/radish-logo.org"))
-#_(def b (org/parse-str a))
+(defn find-deps
+  [org-str]
+  (-> org-str
+      org/parse-str
+      org/zip
+      (get-nodes match-deps?)
+      (get-in [0 :content 0 :content])
+      (->> (apply str))
+      read-string
+      (#(apply dissoc % (remove #{:deps} (keys %))))))
 
+(defn- keep-require
+  [ns-form]
+  (first
+   (filter
+    (fn [el]
+      (when (seq? el)
+        (= (first el) :require)))
+    ns-form)))
+
+;; NOTE: potentially I should make this return a map to capture refers, aliases, exludes, etc.
+(defn find-namespace-requires
+  "Returns a vector of all required namespaces from all ns declarations, dropping aliases, refers, excludes."
+  [org-str]
+  (let [nodes-list (-> org-str
+                       org/parse-str
+                       org/zip
+                       (get-nodes match-ns?))]
+    (->> nodes-list
+         (mapcat :content)
+         (apply str)
+         (#(str "[" % "]"))
+         read-string
+         (filter (fn [[sym & _]] (= sym 'ns))) ;; drop any code that isn't a ns decl
+         (map keep-require)
+         (mapcat rest)
+         (map first)
+         (into #{})
+         vec)))
+
+;; extra deps for the shadow-cljs compilation
 (def cljs-deps
-  '{org.clojure/clojurescript {:mvn/version "1.10.773"}
-   reagent/reagent {:mvn/version "0.10.0"}
-   borkdude/sci {:mvn/version "0.2.6"}
-   com.bhauman/figwheel-main {:mvn/version "0.2.6"}})
+  '{borkdude/sci         {:mvn/version "0.2.6"}
+    reagent/reagent {:mvn/version "1.0.0"}
+    thheller/shadow-cljs {:mvn/version "2.14.0"}
+    cljsjs/react {:mvn/version "17.0.2-0"}
+    cljsjs/react-dom {:mvn/version "17.0.2-0"}
+    cljsjs/react-dom-server {:mvn/version "17.0.2-0"}})
+
+;; deps to dissoc b/c they can't work or aren't needed in the browser
+(def clj-deps ['hiccup/hiccup])
 
 (defn prepare-deps
   [org-str]
-  (update (find-deps org-str) :deps merge cljs-deps))
+  (-> (find-deps org-str)
+      (update :deps (partial apply dissoc) clj-deps)
+      (update :deps merge cljs-deps)))
 
-(defn prepare-doc
-  [org-str]
-  (let [org-content (binding [*user-src-fn* src-fn] (org-content org-str))]
-    '(defn doc [] [:<> org-content])))
+(def blacklisted-namespaces
+  #{'hiccup.core
+    'clojure.java.shell})
 
-(defn advanced-build-index
+(defn prepare-namespace
   [org-str]
-  (let [title (find-title org-str)]
-    (page/html5
-     [:head
-      [:meta {:charset "utf-8"}]
-      [:title title]
-      (page/include-css
-       "style.css"
-       "codemirror.css"
-       "nord.css")
-      (page/include-js
-       "codemirror.js"
-       "clojure.js"
-       "prod-main.js")]
-     [:div {:id "root"}])))
+  (->> org-str
+       find-namespace-requires
+       (remove blacklisted-namespaces)
+       vec))
+
+(defn- ns-publics-wrap
+  [sym]
+  `(ns-publics '~sym))
+
+(defn- ns-symbol-wrap
+  [sym]
+  `'~(identity sym))
+
+(defn radish-ns-src-str
+  [org-str]
+  (let [reqs (prepare-namespace org-str)
+        req-fn #(apply assoc {} ((juxt ns-symbol-wrap ns-publics-wrap) %))
+        req-maps (map req-fn reqs)]
+    (str/join "\n"
+              ["(ns radish.radns"
+               (str (seq (concat [:require] (map vector reqs))) ")")
+               "(def my-ns-map"
+               (str (apply merge req-maps) ")")])))
+
+(defn shadow-cljs-config
+  [org-str]
+  (let [name (safe-name (find-title org-str))]
+    {:builds
+     {:main
+      {:target :browser
+       :js-options
+       {:resolve {"react" {:target :global
+                           :global "React"}
+                  "react-dom" {:target :global
+                               :global "ReactDOM"}}}
+       :modules
+       {:radish {:entries ['radish.core]}
+        :radish.reagent {:entries ['radish.reagent]
+                         :depends-on #{:radish}}}
+       :output-dir "compiled"
+       :devtools   {:repl-pprint true}}}}))
+
+(defn- prepare-radish-project!
+  [org-str]
+  (let [name (str (safe-name (find-title org-str)) "-build")
+        src-dest  (str name "/src/radish")]
+    (sh "mkdir" "-p" name)
+    (sh "mkdir" "-p" src-dest)
+    
+    (doseq [file ["core.cljs"
+                  "error.cljs"
+                  "reagent.cljs"]]
+      (spit (str name "/src/radish/" file)
+            (slurp (clojure.java.io/resource (str "advanced/" file)))))
+
+    (spit (str name "/package.json") "{}")
+    (spit (str name "/shadow-cljs.edn") (shadow-cljs-config org-str))
+    (spit (str name "/deps.edn") (prepare-deps org-str))
+    (spit (str name "/src/radish/radns.cljs") (radish-ns-src-str org-str))))
+
+(defn- fix-env-path
+  []
+  (let [env (into {} (System/getenv))]
+    (update env "PATH" #(str % ":/usr/local/bin"))))
+
+(defn- run-radish-build!
+  [org-str]
+  (prepare-radish-project! org-str)
+  (let [name (str (safe-name (find-title org-str)) "-build")
+        config (shadow-cljs-config org-str)]
+    ;; don't know how to do this within same process yet
+    (sh "/usr/local/bin/clojure" "-M" "-m" "shadow.cljs.devtools.cli" "release" ":main"
+        :env (fix-env-path)
+        :dir name)))
 
 (defn advanced-build!
   [org-str]
   (let [name (safe-name (find-title org-str))
-        index (advanced-build-index org-str)
-        doc (prepare-doc org-str)]
+        build-name (str name "-build")
+        index (binding [*user-src-fn* src-fn] (org->site org-str :advanced))]
+    (run-radish-build! org-str)
     (sh "mkdir" "-p" name)
+    (sh "cp"
+        (str build-name "/compiled/radish.js")
+        (str build-name "/compiled/radish.reagent.js")
+        name)
+    #_(sh "rm" "-rf" build-name)
     (doseq [file ["style.css"
                   "codemirror.css"
                   "nord.css"
                   "codemirror.js"
                   "clojure.js"]]
-      (spit (str name "/" file) (slurp (clojure.java.io/resource file))))
-    (spit (str name "/index.html") index)
-    (spit (str name "/main.cljs") doc)
-    ;; sh uses futures in different threads, so shut them down
-    #_(shutdown-agents)))
+      (spit (str name "/" file) (slurp (clojure.java.io/resource (str "shared/" file)))))
+    (spit (str name "/index.html") index)))
 
 (def cli-options
   [["-i" "--infile FNAME" "The file to be compiled."
@@ -247,4 +366,7 @@
             msg (str "Compiling " infile " into directory " outdir ".")]
         (println msg)
         (basic-build! org-str)
-        (println "Success! Have a nice day :)")))))
+        (println "Success! Have a nice day :)"))))
+  ;; sh uses futures in different threads, so shut them down to prevent delayed exit
+  ;; calling sh in REPL doesn't have the hanging issue, so shutdown agents here.
+  (shutdown-agents))

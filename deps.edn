@@ -1,12 +1,21 @@
 {:deps 
- {org.clojure/clojure   {:mvn/version "1.10.3"}
-  org.clojure/tools.cli {:mvn/version "1.0.206"}
-  hiccup/hiccup         {:mvn/version "2.0.0-alpha2"}
-  orgmode/orgmode
-  {:git/url "https://github.com/bnbeckwith/orgmode"
-   :sha "722972c72b43c18a5cdbbc9c3e392b5ee9e2b503"}
-  #_{:local/root "/Users/adam/dev/orgmode"}}
+ {org.clojure/clojure            {:mvn/version "1.10.3"}
+  org.clojure/tools.cli          {:mvn/version "1.0.206"}
+  hiccup/hiccup                  {:mvn/version "2.0.0-alpha2"}
+  io.github.adam-james-v/svg-clj {:mvn/version "0.0.3-SNAPSHOT"}
+  orgmode/orgmode {:git/url "https://github.com/bnbeckwith/orgmode"
+                   :sha "722972c72b43c18a5cdbbc9c3e392b5ee9e2b503"}
+
+  ;; deps for shadow-cljs compilation
+  thheller/shadow-cljs    {:mvn/version "2.14.0"}
+  borkdude/sci            {:mvn/version "0.2.6"}
+  reagent/reagent         {:mvn/version "1.0.0"}
+  cljsjs/react            {:mvn/version "17.0.2-0"}
+  cljsjs/react-dom        {:mvn/version "17.0.2-0"}
+  cljsjs/react-dom-server {:mvn/version "17.0.2-0"}}
+ 
  :paths ["src" "resources"]
+ 
  :aliases
  {:test
   {:extra-paths ["test"]
