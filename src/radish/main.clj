@@ -233,7 +233,9 @@
     cljsjs/react-dom-server {:mvn/version "17.0.2-0"}})
 
 ;; deps to dissoc b/c they can't work or aren't needed in the browser
-(def clj-deps ['hiccup/hiccup])
+(def clj-deps ['hiccup/hiccup
+               'org.clojure/clojure
+               'org.clojure/tools.cli])
 
 (defn prepare-deps
   [org-str]

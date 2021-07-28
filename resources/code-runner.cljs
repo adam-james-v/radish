@@ -3,8 +3,7 @@
 
 (defn editor
   [id state]
-  (let [lines (str/split-lines @state)
-        cm (.fromTextArea  js/CodeMirror
+  (let [cm (.fromTextArea  js/CodeMirror
                            (.getElementById js/document id)
                            #js {:mode "clojure"
                                 :theme "nord"
@@ -52,13 +51,32 @@
         [:code (if result (str result) "nil")]
         (when (renderable? result) [:div result])]])))
 
+(def current-ns (atom 'cljs.user))
+
+(defn contains-ns?
+  [s]
+  (str/includes? s "(ns "))
+
+(defn extract-ns
+  [src-str]
+  (->> src-str
+       (#(str "[" % "]"))
+       read-string
+       (filter (fn [[sym & _]] (= sym 'ns))) ;; drop any code that isn't a ns decl
+       last
+       second))
+  
 (defn run-src
   [elem]
   (let [id (gensym "src-")
         src-str (.-innerText elem)
         parent (.-parentNode elem)
-        state (r/atom src-str)]
-    (rdom/render [:textarea {:id id} src-str] parent)
+        state (r/atom src-str)
+        this-ns (if (contains-ns? src-str)
+                  `'~(extract-ns src-str)
+                  @current-ns)]
+    (reset! current-ns this-ns) 
+    (rdom/render [:textarea {:id id} (str "(in-ns " this-ns ")\n" src-str)] parent)
     (editor id state)
     (rdom/render [result-component state] parent)))
 

@@ -472,7 +472,13 @@ textarea {
 #+END_SRC
 
 ** code-runner
-This script is used in a basic site output, when there is no need to grab external dependencies.
+This script is embedded into the index.html file and is responsible for 'building' and evaluating the src blocks in the base site.
+
+The code runner itself is evaluated and run via scittle for a basic site output and radish.core (a clone of scittle with additional deps. automatically compiled in) for an advanced build.
+
+NOTE: When using radish.core, the code-runner source string has one single modification:
+
+in ~result-component~, ~js/scittle.core.eval_string~ is turned into ~js/radish.core.eval_string~. Everything else is identical.
 
 #+begin_src clojure :tangle ./resources/code-runner.cljs
 (require '[reagent.core :as r]
@@ -480,8 +486,7 @@ This script is used in a basic site output, when there is no need to grab extern
 
 (defn editor
   [id state]
-  (let [lines (str/split-lines @state)
-        cm (.fromTextArea  js/CodeMirror
+  (let [cm (.fromTextArea  js/CodeMirror
                            (.getElementById js/document id)
                            #js {:mode "clojure"
                                 :theme "nord"
@@ -529,13 +534,32 @@ This script is used in a basic site output, when there is no need to grab extern
         [:code (if result (str result) "nil")]
         (when (renderable? result) [:div result])]])))
 
+(def current-ns (atom 'cljs.user))
+
+(defn contains-ns?
+  [s]
+  (str/includes? s "(ns "))
+
+(defn extract-ns
+  [src-str]
+  (->> src-str
+       (#(str "[" % "]"))
+       read-string
+       (filter (fn [[sym & _]] (= sym 'ns))) ;; drop any code that isn't a ns decl
+       last
+       second))
+  
 (defn run-src
   [elem]
   (let [id (gensym "src-")
         src-str (.-innerText elem)
         parent (.-parentNode elem)
-        state (r/atom src-str)]
-    (rdom/render [:textarea {:id id} src-str] parent)
+        state (r/atom src-str)
+        this-ns (if (contains-ns? src-str)
+                  `'~(extract-ns src-str)
+                  @current-ns)]
+    (reset! current-ns this-ns) 
+    (rdom/render [:textarea {:id id} (str "(in-ns " this-ns ")\n" src-str)] parent)
     (editor id state)
     (rdom/render [result-component state] parent)))
 
@@ -544,6 +568,249 @@ This script is used in a basic site output, when there is no need to grab extern
     (mapv run-src blocks)))
 
 (run!)
+#+end_src
+
+** advanced-build-srcs
+These sources are nearly identitcal to the scittle src code.
+The reason they are used here is to allow shadow-cljs to compile js artifacts that incorporate the deps/namespaces found by radish.
+
+Basically, an 'advanced' radish build will automatically generate a scittle clone project, adding the user's namespace requirements into the eval context. Then, shadow-cljs runs on this project, emitting radish.js and radish.reagent.js (the latter should always be unchanged), which can then be treated just like the scittle sources for a 'basic' build.
+
+*** error
+#+begin_src clojure :tangle ./resources/advanced/error.cljs
+(ns radish.error
+  (:refer-clojure :exclude [println])
+  (:require [clojure.string :as str]
+            [sci.impl.callstack :as cs]))
+
+(defn println [& strs]
+  (.error js/console (str/join " " strs)))
+
+(defn ruler [title]
+  (println (apply str "----- " title " " (repeat (- 50 7 (count title)) \-))))
+
+(defn split-stacktrace [stacktrace verbose?]
+  (if verbose? [stacktrace]
+      (let [stack-count (count stacktrace)]
+        (if (<= stack-count 10)
+          [stacktrace]
+          [(take 5 stacktrace)
+           (drop (- stack-count 5) stacktrace)]))))
+
+(defn print-stacktrace
+  [stacktrace {:keys [:verbose?]}]
+  (let [stacktrace (cs/format-stacktrace stacktrace)
+        segments (split-stacktrace stacktrace verbose?)
+        [fst snd] segments]
+    (run! #(print % "\n") fst)
+    (when snd
+      (print "...\n")
+      (run! #(print % "\n") snd))))
+
+(defn error-context [ex src-map]
+  (let [{:keys [:file :line :column]} (ex-data ex)]
+    (when (and file line)
+      (when-let [content (get src-map file)]
+        (let [matching-line (dec line)
+              start-line (max (- matching-line 4) 0)
+              end-line (+ matching-line 6)
+              [before after] (->>
+                              (str/split-lines content)
+                              (map-indexed list)
+                              (drop start-line)
+                              (take (- end-line start-line))
+                              (split-at (inc (- matching-line start-line))))
+              snippet-lines (concat before
+                                    [[nil (str (str/join "" (repeat (dec column) " "))
+                                               (str "^--- " (ex-message ex)))]]
+                                    after)
+              indices (map first snippet-lines)
+              max-size (reduce max 0 (map (comp count str) indices))
+              snippet-lines (map (fn [[idx line]]
+                                   (if idx
+                                     (let [line-number (inc idx)]
+                                       (str (.padStart (str line-number) max-size "0") "  " line))
+                                     (str (str/join (repeat (+ 2 max-size) " ")) line)))
+                                 snippet-lines)]
+          (str "\n" (str/join "\n" snippet-lines)))))))
+
+(defn right-pad [s n]
+  (let [n (- n (count s))]
+    (str s (str/join (repeat n " ")))))
+
+(defn print-locals [locals]
+  (let [max-name-length (reduce max 0 (map (comp count str)
+                                           (keys locals)))
+        max-name-length (+ max-name-length 2)]
+    (println
+     (with-out-str (binding [*print-length* 10
+                             ,*print-level* 2]
+                     (doseq [[k v] locals]
+                       (print (str (right-pad (str k ": ") max-name-length)))
+                       ;; print nil as nil
+                       (prn v)))))))
+
+(defn error-handler [e src-map]
+  (let [d (ex-data e)
+        sci-error? (isa? (:type d) :sci/error)
+        stacktrace (some->
+                    d :sci.impl/callstack
+                    cs/stacktrace)]
+    (ruler "Scittle error")
+    (when-let [name (.-name e)]
+      (when-not (= "Error" name)
+        (println "Type:    " name)))
+    (when-let [m (.-message e)]
+      (println (str "Message:  " m)))
+    (when-let [d (ex-data (ex-cause e) #_(.getCause e))]
+      (print (str "Data:     "))
+      (prn d))
+    (let [{:keys [:file :line :column]} d]
+      (when line
+        (println (str "Location: "
+                      (when file (str file ":"))
+                      line ":" column""))))
+    (when-let [phase (cs/phase e stacktrace)]
+      (println "Phase:   " phase))
+    (when-let [ec (when sci-error?
+                      (error-context e src-map))]
+        (ruler "Context")
+        (println ec))
+    (when-let [locals (not-empty (:locals d))]
+      (ruler "Locals")
+      (print-locals locals))
+    (when sci-error?
+      (when-let
+          [st (let [st (with-out-str
+                         (when stacktrace
+                           (print-stacktrace stacktrace src-map)))]
+                (when-not (str/blank? st) st))]
+        (ruler "Stack trace")
+        (println st)))))
+
+#+end_src
+
+*** core
+#+begin_src clojure :tangle ./resources/advanced/core.cljs
+(ns radish.core
+  (:refer-clojure :exclude [time])
+  (:require [goog.object :as gobject]
+            [goog.string]
+            [sci.core :as sci]
+            [radish.error :as error]
+            [cljs.reader :refer [read-string]]
+            ;; radish.radns is generated based on deps/ns declarations in org file
+            [radish.radns :refer [my-ns-map]]))
+
+(clojure.core/defmacro time
+  "Evaluates expr and prints the time it took. Returns the value of expr."
+  [expr]
+  `(let [start# (cljs.core/system-time)
+         ret# ~expr]
+     (prn (cljs.core/str "Elapsed time: "
+                         (.toFixed (- (system-time) start#) 6)
+                         " msecs"))
+     ret#))
+
+(def stns (sci/create-ns 'sci.script-tag nil))
+(def cljns (sci/create-ns 'clojure.core nil))
+(def rns (sci/create-ns 'cljs.reader nil))
+
+(def namespaces
+  (merge 
+   {'clojure.core
+    {'println     println
+     'prn         prn
+     'system-time system-time
+     'time        (sci/copy-var time cljns)
+     'random-uuid random-uuid
+     'read-string (sci/copy-var read-string rns)}
+    'goog.object {'set gobject/set
+                  'get gobject/get}}
+   my-ns-map))
+
+(def ctx (atom (sci/init {:namespaces namespaces
+                          :classes {'js js/window
+                                    :allow :all}
+                          :disable-arity-checks true})))
+
+(defn ^:export eval-string [s]
+  (try (sci/eval-string* @ctx s)
+       (catch :default e
+         (error/error-handler e (:src @ctx))
+         (let [sci-error? (isa? (:type (ex-data e)) :sci/error)]
+           (throw (if sci-error?
+                    (or (ex-cause e) e)
+                    e))))))
+
+(defn register-plugin! [plug-in-name sci-opts]
+  plug-in-name ;; unused for now
+  (swap! ctx sci/merge-opts sci-opts))
+
+(defn- eval-script-tags* [script-tags]
+  (when-let [tag (first script-tags)]
+    (if-let [text (not-empty (gobject/get tag "textContent"))]
+      (let [scittle-id (str (gensym "scittle-tag-"))]
+        (gobject/set tag "scittle_id" scittle-id)
+        (swap! ctx assoc-in [:src scittle-id] text)
+        (sci/binding [sci/file scittle-id]
+          (eval-string text))
+        (eval-script-tags* (rest script-tags)))
+      (let [src (.getAttribute tag "src")
+            req (js/XMLHttpRequest.)
+            _ (.open req "GET" src true)
+            _ (gobject/set req "onload"
+                           (fn [] (this-as this
+                                    (let [response (gobject/get this "response")]
+                                      (gobject/set tag "scittle_id" src)
+                                      ;; save source for error messages
+                                      (swap! ctx assoc-in [:src src] response)
+                                      (sci/binding [sci/file src]
+                                        (eval-string response)))
+                                    (eval-script-tags* (rest script-tags)))))]
+        (.send req)))))
+
+(defn ^:export eval-script-tags []
+  (let [script-tags (js/document.querySelectorAll "script[type='application/x-scittle']")]
+    (eval-script-tags* script-tags)))
+
+(def auto-load-disabled? (volatile! false))
+
+(defn ^:export disable-auto-eval
+  "By default, scittle evaluates script nodes on the DOMContentLoaded
+  event using the eval-script-tags function. This function disables
+  that behavior."
+  []
+  (vreset! auto-load-disabled? true))
+
+(js/document.addEventListener
+ "DOMContentLoaded"
+ (fn [] (when-not @auto-load-disabled? (eval-script-tags))), false)
+#+end_src
+
+*** reagent
+#+begin_src clojure :tangle ./resources/advanced/reagent.cljs
+(ns radish.reagent
+  (:require [reagent.core :as r]
+            [reagent.dom :as rdom]
+            [sci.core :as sci]
+            [radish.core :as rad]))
+
+(def rns (sci/create-ns 'reagent.core nil))
+
+(def reagent-namespace
+  {'atom (sci/copy-var r/atom rns)
+   'as-element (sci/copy-var r/as-element rns)})
+
+(def rdns (sci/create-ns 'reagent.dom nil))
+
+(def reagent-dom-namespace
+  {'render (sci/copy-var rdom/render rdns)})
+
+(rad/register-plugin!
+ ::reagent
+ {:namespaces {'reagent.core reagent-namespace
+               'reagent.dom reagent-dom-namespace}})
 #+end_src
 
 * main
@@ -670,7 +937,7 @@ This script is used in a basic site output, when there is no need to grab extern
 
 #+end_src
 
-** basic-build
+** site-build-fns
 #+begin_src clojure :tangle ./src/radish/main.clj
 (defn src-fn
   [x]
@@ -731,7 +998,10 @@ This script is used in a basic site output, when there is no need to grab extern
           (str/replace code-runner-str "js/scittle.core.eval_string" "js/radish.core.eval_string")
           code-runner-str)]]
       org-content))))
+#+end_src
 
+** basic-build
+#+begin_src clojure :tangle ./src/radish/main.clj
 (defn basic-build!
   [org-str]
   (let [name (safe-name (find-title org-str))
@@ -798,7 +1068,9 @@ This script is used in a basic site output, when there is no need to grab extern
     cljsjs/react-dom-server {:mvn/version "17.0.2-0"}})
 
 ;; deps to dissoc b/c they can't work or aren't needed in the browser
-(def clj-deps ['hiccup/hiccup])
+(def clj-deps ['hiccup/hiccup
+               'org.clojure/clojure
+               'org.clojure/tools.cli])
 
 (defn prepare-deps
   [org-str]
@@ -939,249 +1211,6 @@ This script is used in a basic site output, when there is no need to grab extern
   ;; sh uses futures in different threads, so shut them down to prevent delayed exit
   ;; calling sh in REPL doesn't have the hanging issue, so shutdown agents here.
   (shutdown-agents))
-#+end_src
-
-* advanced-build-srcs
-These sources are nearly identitcal to the scittle src code.
-The reason they are used here is to allow shadow-cljs to compile js artifacts that incorporate the deps/namespaces found by radish.
-
-Basically, an 'advanced' radish build will automatically generate a scittle clone project, adding the user's namespace requirements into the eval context. Then, shadow-cljs runs on this project, emitting radish.js and radish.reagent.js (the latter should always be unchanged), which can then be treated just like the scittle sources for a 'basic' build.
-
-** error
-#+begin_src clojure :tangle ./resources/advanced/error.cljs
-(ns radish.error
-  (:refer-clojure :exclude [println])
-  (:require [clojure.string :as str]
-            [sci.impl.callstack :as cs]))
-
-(defn println [& strs]
-  (.error js/console (str/join " " strs)))
-
-(defn ruler [title]
-  (println (apply str "----- " title " " (repeat (- 50 7 (count title)) \-))))
-
-(defn split-stacktrace [stacktrace verbose?]
-  (if verbose? [stacktrace]
-      (let [stack-count (count stacktrace)]
-        (if (<= stack-count 10)
-          [stacktrace]
-          [(take 5 stacktrace)
-           (drop (- stack-count 5) stacktrace)]))))
-
-(defn print-stacktrace
-  [stacktrace {:keys [:verbose?]}]
-  (let [stacktrace (cs/format-stacktrace stacktrace)
-        segments (split-stacktrace stacktrace verbose?)
-        [fst snd] segments]
-    (run! #(print % "\n") fst)
-    (when snd
-      (print "...\n")
-      (run! #(print % "\n") snd))))
-
-(defn error-context [ex src-map]
-  (let [{:keys [:file :line :column]} (ex-data ex)]
-    (when (and file line)
-      (when-let [content (get src-map file)]
-        (let [matching-line (dec line)
-              start-line (max (- matching-line 4) 0)
-              end-line (+ matching-line 6)
-              [before after] (->>
-                              (str/split-lines content)
-                              (map-indexed list)
-                              (drop start-line)
-                              (take (- end-line start-line))
-                              (split-at (inc (- matching-line start-line))))
-              snippet-lines (concat before
-                                    [[nil (str (str/join "" (repeat (dec column) " "))
-                                               (str "^--- " (ex-message ex)))]]
-                                    after)
-              indices (map first snippet-lines)
-              max-size (reduce max 0 (map (comp count str) indices))
-              snippet-lines (map (fn [[idx line]]
-                                   (if idx
-                                     (let [line-number (inc idx)]
-                                       (str (.padStart (str line-number) max-size "0") "  " line))
-                                     (str (str/join (repeat (+ 2 max-size) " ")) line)))
-                                 snippet-lines)]
-          (str "\n" (str/join "\n" snippet-lines)))))))
-
-(defn right-pad [s n]
-  (let [n (- n (count s))]
-    (str s (str/join (repeat n " ")))))
-
-(defn print-locals [locals]
-  (let [max-name-length (reduce max 0 (map (comp count str)
-                                           (keys locals)))
-        max-name-length (+ max-name-length 2)]
-    (println
-     (with-out-str (binding [*print-length* 10
-                             ,*print-level* 2]
-                     (doseq [[k v] locals]
-                       (print (str (right-pad (str k ": ") max-name-length)))
-                       ;; print nil as nil
-                       (prn v)))))))
-
-(defn error-handler [e src-map]
-  (let [d (ex-data e)
-        sci-error? (isa? (:type d) :sci/error)
-        stacktrace (some->
-                    d :sci.impl/callstack
-                    cs/stacktrace)]
-    (ruler "Scittle error")
-    (when-let [name (.-name e)]
-      (when-not (= "Error" name)
-        (println "Type:    " name)))
-    (when-let [m (.-message e)]
-      (println (str "Message:  " m)))
-    (when-let [d (ex-data (ex-cause e) #_(.getCause e))]
-      (print (str "Data:     "))
-      (prn d))
-    (let [{:keys [:file :line :column]} d]
-      (when line
-        (println (str "Location: "
-                      (when file (str file ":"))
-                      line ":" column""))))
-    (when-let [phase (cs/phase e stacktrace)]
-      (println "Phase:   " phase))
-    (when-let [ec (when sci-error?
-                      (error-context e src-map))]
-        (ruler "Context")
-        (println ec))
-    (when-let [locals (not-empty (:locals d))]
-      (ruler "Locals")
-      (print-locals locals))
-    (when sci-error?
-      (when-let
-          [st (let [st (with-out-str
-                         (when stacktrace
-                           (print-stacktrace stacktrace src-map)))]
-                (when-not (str/blank? st) st))]
-        (ruler "Stack trace")
-        (println st)))))
-
-#+end_src
-
-** core
-#+begin_src clojure :tangle ./resources/advanced/core.cljs
-(ns radish.core
-  (:refer-clojure :exclude [time])
-  (:require [goog.object :as gobject]
-            [goog.string]
-            [sci.core :as sci]
-            [radish.error :as error]
-            [cljs.reader :refer [read-string]]
-            ;; radish.radns is generated based on deps/ns declarations in org file
-            [radish.radns :refer [my-ns-map]]))
-
-(clojure.core/defmacro time
-  "Evaluates expr and prints the time it took. Returns the value of expr."
-  [expr]
-  `(let [start# (cljs.core/system-time)
-         ret# ~expr]
-     (prn (cljs.core/str "Elapsed time: "
-                         (.toFixed (- (system-time) start#) 6)
-                         " msecs"))
-     ret#))
-
-(def stns (sci/create-ns 'sci.script-tag nil))
-(def cljns (sci/create-ns 'clojure.core nil))
-(def rns (sci/create-ns 'cljs.reader nil))
-
-(def namespaces
-  (merge 
-   {'clojure.core
-    {'println     println
-     'prn         prn
-     'system-time system-time
-     'time        (sci/copy-var time cljns)
-     'random-uuid random-uuid
-     'read-string (sci/copy-var read-string rns)}
-    'goog.object {'set gobject/set
-                  'get gobject/get}}
-   my-ns-map))
-
-(def ctx (atom (sci/init {:namespaces namespaces
-                          :classes {'js js/window
-                                    :allow :all}
-                          :disable-arity-checks true})))
-
-(defn ^:export eval-string [s]
-  (try (sci/eval-string* @ctx s)
-       (catch :default e
-         (error/error-handler e (:src @ctx))
-         (let [sci-error? (isa? (:type (ex-data e)) :sci/error)]
-           (throw (if sci-error?
-                    (or (ex-cause e) e)
-                    e))))))
-
-(defn register-plugin! [plug-in-name sci-opts]
-  plug-in-name ;; unused for now
-  (swap! ctx sci/merge-opts sci-opts))
-
-(defn- eval-script-tags* [script-tags]
-  (when-let [tag (first script-tags)]
-    (if-let [text (not-empty (gobject/get tag "textContent"))]
-      (let [scittle-id (str (gensym "scittle-tag-"))]
-        (gobject/set tag "scittle_id" scittle-id)
-        (swap! ctx assoc-in [:src scittle-id] text)
-        (sci/binding [sci/file scittle-id]
-          (eval-string text))
-        (eval-script-tags* (rest script-tags)))
-      (let [src (.getAttribute tag "src")
-            req (js/XMLHttpRequest.)
-            _ (.open req "GET" src true)
-            _ (gobject/set req "onload"
-                           (fn [] (this-as this
-                                    (let [response (gobject/get this "response")]
-                                      (gobject/set tag "scittle_id" src)
-                                      ;; save source for error messages
-                                      (swap! ctx assoc-in [:src src] response)
-                                      (sci/binding [sci/file src]
-                                        (eval-string response)))
-                                    (eval-script-tags* (rest script-tags)))))]
-        (.send req)))))
-
-(defn ^:export eval-script-tags []
-  (let [script-tags (js/document.querySelectorAll "script[type='application/x-scittle']")]
-    (eval-script-tags* script-tags)))
-
-(def auto-load-disabled? (volatile! false))
-
-(defn ^:export disable-auto-eval
-  "By default, scittle evaluates script nodes on the DOMContentLoaded
-  event using the eval-script-tags function. This function disables
-  that behavior."
-  []
-  (vreset! auto-load-disabled? true))
-
-(js/document.addEventListener
- "DOMContentLoaded"
- (fn [] (when-not @auto-load-disabled? (eval-script-tags))), false)
-#+end_src
-
-** reagent
-#+begin_src clojure :tangle ./resources/advanced/reagent.cljs
-(ns radish.reagent
-  (:require [reagent.core :as r]
-            [reagent.dom :as rdom]
-            [sci.core :as sci]
-            [radish.core :as rad]))
-
-(def rns (sci/create-ns 'reagent.core nil))
-
-(def reagent-namespace
-  {'atom (sci/copy-var r/atom rns)
-   'as-element (sci/copy-var r/as-element rns)})
-
-(def rdns (sci/create-ns 'reagent.dom nil))
-
-(def reagent-dom-namespace
-  {'render (sci/copy-var rdom/render rdns)})
-
-(rad/register-plugin!
- ::reagent
- {:namespaces {'reagent.core reagent-namespace
-               'reagent.dom reagent-dom-namespace}})
 #+end_src
 
 * tests
