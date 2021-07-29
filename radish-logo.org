@@ -191,7 +191,7 @@ A helper fn that multiplies every pt by [1 -1] to mirror along the x axis.
 [[file:radish.svg]]
 
 * other-ns
-This is jsut to see if I can grab multiple NS declarations.
+This is just to see if I can grab multiple NS declarations.
 
 #+begin_src clojure
 (ns radish-logo.misc

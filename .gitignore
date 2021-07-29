@@ -7,6 +7,9 @@ pom.xml.asc
 /target/
 /checkouts/
 /build/
+/radish-logo/
+/radish-logo-build/
+/radish-basic-example/
 .lein-deps-sum
 .lein-repl-history
 .lein-plugins/

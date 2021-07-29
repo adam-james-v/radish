@@ -23,16 +23,6 @@
             (recur (zip/next new-loc))))
         (recur (zip/next loc))))))
 
-(defn get-nodes
-  [zipper matcher]
-  (loop [loc zipper
-         acc []]
-    (if (zip/end? loc)
-      acc
-      (if (matcher loc)
-        (recur (zip/next loc) (conj acc (zip/node loc)))
-        (recur (zip/next loc) acc)))))
-
 (defn match-result?
   [loc]
   (let [node (zip/node loc)
@@ -68,7 +58,7 @@
     
 ;; don't remove the entire node as the #+RESULT is within a paragraph
 ;; which means there may be required content following the results.
-(defn remove-result
+(defn- remove-result
   [node]
   (let [new-content (drop 2 (:content node))]
     (assoc node :content (vec new-content))))
@@ -78,11 +68,31 @@
   (let [org-zipper (org/zip org)]
     (tree-edit org-zipper match-result? remove-result)))
 
+(defn- remove-deps-node
+  [node]
+  (let [new-content ["deps elided"]]
+    (assoc node :content (vec new-content))))
+
+(defn remove-deps
+  [org]
+  (let [org-zipper (org/zip org)]
+    (tree-edit org-zipper match-deps? remove-deps-node)))
+
+(defn get-nodes
+  [zipper matcher]
+  (loop [loc zipper
+         acc []]
+    (if (zip/end? loc)
+      acc
+      (if (matcher loc)
+        (recur (zip/next loc) (conj acc (zip/node loc)))
+        (recur (zip/next loc) acc)))))
+
 (defn get-headlines
   [org]
   (map :text (get-nodes (org/zip org) match-headlines?)))
 
-(defn find-title
+(defn get-title
   [org-str]
   (let [lines (str/split-lines org-str)
         headlines (filter #(not (str/starts-with? % ";"))
@@ -94,21 +104,114 @@
       (first headlines))))
 
 (defn safe-name
-[title]
-(-> title
-    str/lower-case
-    (str/replace #";" "-")
-    (str/replace #" " "-")))
+  [title]
+  (-> title
+      str/lower-case
+      (str/replace #";" "-")
+      (str/replace #" " "-")))
 
-(defn find-author
-[org-str]
-(let [lines (str/split-lines org-str)
-      f #(str/starts-with? (str/upper-case %) "#+AUTHOR")
-      title (->> lines
-                 (filter f)
-                 first)]
-  (when title
-    (str/join " " (-> title (str/split #" ") rest)))))
+(defn get-author
+  [org-str]
+  (let [lines (str/split-lines org-str)
+        f #(str/starts-with? (str/upper-case %) "#+AUTHOR")
+        title (->> lines
+                   (filter f)
+                   first)]
+    (when title
+      (str/join " " (-> title (str/split #" ") rest)))))
+
+(defn get-deps
+  [org-str]
+  (-> org-str
+      org/parse-str
+      org/zip
+      (get-nodes match-deps?)
+      (get-in [0 :content 0 :content])
+      (->> (apply str))
+      read-string
+      (#(apply dissoc % (remove #{:deps} (keys %))))))
+
+(defn- keep-require
+  [ns-form]
+  (first
+   (filter
+    (fn [el]
+      (when (seq? el)
+        (= (first el) :require)))
+    ns-form)))
+
+;; NOTE: potentially I should make this return a map to capture refers, aliases, exludes, etc.
+(defn get-namespace-requires
+  "Returns a vector of all required namespaces from all ns declarations, dropping aliases, refers, excludes."
+  [org-str]
+  (let [nodes-list (-> org-str
+                       org/parse-str
+                       org/zip
+                       (get-nodes match-ns?))]
+    (->> nodes-list
+         (mapcat :content)
+         (apply str)
+         (#(str "[" % "]"))
+         read-string
+         (filter (fn [[sym & _]] (= sym 'ns))) ;; drop any code that isn't a ns decl
+         (map keep-require)
+         (mapcat rest)
+         (map first)
+         (into #{})
+         vec)))
+
+(def blacklisted-namespaces
+  #{'hiccup.core
+    'clojure.java.shell})
+
+(defn- blacklisted?
+  [req-entry]
+  (blacklisted-namespaces (first req-entry)))
+
+(defn- clean-namespace-decl
+  [node]
+  (let [to-remove (map name blacklisted-namespaces)
+        src (->> node
+                 :content
+                 (apply str)
+                 (#(str "[" % "]"))
+                 read-string)
+        ns-decl (->> src
+                     (filter (fn [[sym & _]] (= sym 'ns)))
+                     first
+                     vec)
+        ns-decl-idx (->> src
+                         (take-while (fn [[sym & _]] (= sym 'ns)))
+                         count
+                         dec)
+        req-idx (->> ns-decl
+                     (take-while #(not (when (seqable? %) (= (first %) :require))))
+                     count)
+        reqs (->> ns-decl
+                  (filter #(when (seqable? %) (= (first %) :require)))
+                  first
+                  rest
+                  (remove blacklisted?)
+                  (into '[:require])
+                  (apply list))
+        xf-ns-decl (apply list (assoc ns-decl req-idx reqs))
+        xf-src (apply list (assoc src ns-decl-idx xf-ns-decl))
+        xf-src-str (apply str (map #(with-out-str (clojure.pprint/pprint %)) xf-src))
+        xf-content (-> xf-src-str
+                       (str/replace "(ns\n" "(ns")
+                       (str/replace "(:require\n" "(:require")
+                       str/split-lines
+                       vec)]
+  (assoc node :content xf-content)))
+
+(defn clean-namespace-decls
+  [org]
+  (let [org-zipper (org/zip org)]
+    (tree-edit org-zipper match-ns? clean-namespace-decl)))
+
+;; gdaythisisben from Twitch
+;; (__(o_o)__)
+;; meditating with parens
 
 (defn src-fn
   [x]
@@ -118,13 +221,15 @@
 
 (defn org-content
   [org-str]
-  (let [title (find-title org-str)
-        author (find-author org-str)]
+  (let [title (get-title org-str)
+        author (get-author org-str)]
     (list
      [:header [:h1 title]]
      [:main (-> org-str
                 org/parse-str
+                remove-deps
                 remove-results
+                clean-namespace-decls
                 hiccupify)]
      [:footer
       (when author
@@ -136,8 +241,8 @@
 (defn org->site
   ([org-str] (org->site org-str nil))
   ([org-str advanced?]
-   (let [title (find-title org-str)
-         author (find-author org-str)
+   (let [title (get-title org-str)
+         author (get-author org-str)
          org-content (into [:body] (org-content org-str))
          code-runner-str (slurp (clojure.java.io/resource "code-runner.cljs"))]
      (page/html5
@@ -172,7 +277,7 @@
 
 (defn basic-build!
   [org-str]
-  (let [name (safe-name (find-title org-str))
+  (let [name (safe-name (get-title org-str))
         index (binding [*user-src-fn* src-fn] (org->site org-str))]
     (sh "mkdir" "-p" name)
     (doseq [file ["style.css"
@@ -183,46 +288,6 @@
       (spit (str name "/" file) (slurp (clojure.java.io/resource (str "shared/" file)))))
     (spit (str name "/index.html") index)))
 
-(defn find-deps
-  [org-str]
-  (-> org-str
-      org/parse-str
-      org/zip
-      (get-nodes match-deps?)
-      (get-in [0 :content 0 :content])
-      (->> (apply str))
-      read-string
-      (#(apply dissoc % (remove #{:deps} (keys %))))))
-
-(defn- keep-require
-  [ns-form]
-  (first
-   (filter
-    (fn [el]
-      (when (seq? el)
-        (= (first el) :require)))
-    ns-form)))
-
-;; NOTE: potentially I should make this return a map to capture refers, aliases, exludes, etc.
-(defn find-namespace-requires
-  "Returns a vector of all required namespaces from all ns declarations, dropping aliases, refers, excludes."
-  [org-str]
-  (let [nodes-list (-> org-str
-                       org/parse-str
-                       org/zip
-                       (get-nodes match-ns?))]
-    (->> nodes-list
-         (mapcat :content)
-         (apply str)
-         (#(str "[" % "]"))
-         read-string
-         (filter (fn [[sym & _]] (= sym 'ns))) ;; drop any code that isn't a ns decl
-         (map keep-require)
-         (mapcat rest)
-         (map first)
-         (into #{})
-         vec)))
-
 ;; extra deps for the shadow-cljs compilation
 (def cljs-deps
   '{borkdude/sci         {:mvn/version "0.2.6"}
@@ -232,25 +297,21 @@
     cljsjs/react-dom {:mvn/version "17.0.2-0"}
     cljsjs/react-dom-server {:mvn/version "17.0.2-0"}})
 
-;; deps to dissoc b/c they can't work or aren't needed in the browser
+;; deps to dissoc b/c they won't work or aren't needed in the browser
 (def clj-deps ['hiccup/hiccup
                'org.clojure/clojure
                'org.clojure/tools.cli])
 
 (defn prepare-deps
   [org-str]
-  (-> (find-deps org-str)
+  (-> (get-deps org-str)
       (update :deps (partial apply dissoc) clj-deps)
       (update :deps merge cljs-deps)))
-
-(def blacklisted-namespaces
-  #{'hiccup.core
-    'clojure.java.shell})
 
 (defn prepare-namespace
   [org-str]
   (->> org-str
-       find-namespace-requires
+       get-namespace-requires
        (remove blacklisted-namespaces)
        vec))
 
@@ -275,7 +336,7 @@
 
 (defn shadow-cljs-config
   [org-str]
-  (let [name (safe-name (find-title org-str))]
+  (let [name (safe-name (get-title org-str))]
     {:builds
      {:main
       {:target :browser
@@ -293,7 +354,7 @@
 
 (defn- prepare-radish-project!
   [org-str]
-  (let [name (str (safe-name (find-title org-str)) "-build")
+  (let [name (str (safe-name (get-title org-str)) "-build")
         src-dest  (str name "/src/radish")]
     (sh "mkdir" "-p" name)
     (sh "mkdir" "-p" src-dest)
@@ -317,7 +378,7 @@
 (defn- run-radish-build!
   [org-str]
   (prepare-radish-project! org-str)
-  (let [name (str (safe-name (find-title org-str)) "-build")
+  (let [name (str (safe-name (get-title org-str)) "-build")
         config (shadow-cljs-config org-str)]
     ;; don't know how to do this within same process yet
     (sh "/usr/local/bin/clojure" "-M" "-m" "shadow.cljs.devtools.cli" "release" ":main"
@@ -326,7 +387,7 @@
 
 (defn advanced-build!
   [org-str]
-  (let [name (safe-name (find-title org-str))
+  (let [name (safe-name (get-title org-str))
         build-name (str name "-build")
         index (binding [*user-src-fn* src-fn] (org->site org-str :advanced))]
     (run-radish-build! org-str)
@@ -349,11 +410,17 @@
     :default nil]
    ["-h" "--help"]])
 
+(defn- requires-advanced?
+  [org-str]
+  (let [org (org/parse-str org-str)]
+    (not (empty? (get-nodes (org/zip org) match-deps?)))))
+
 (defn -main
   [& args]
   (let [parsed (cli/parse-opts args cli-options)
         {:keys [:infile :help]} (:options parsed)
-        [in _] (when infile (str/split infile #"\."))]
+        [in _] (when infile (str/split infile #"\."))
+        ]
     (cond
       help
       (do (println "Usage:")
@@ -364,10 +431,16 @@
       
       :else
       (let [org-str (slurp infile)
-            outdir (safe-name (find-title org-str))
+            outdir (safe-name (get-title org-str))
             msg (str "Compiling " infile " into directory " outdir ".")]
         (println msg)
-        (basic-build! org-str)
+        (if (requires-advanced? org-str)
+          (do
+            (println "Detected external dependencies, running advanced build.")
+            (advanced-build! org-str))
+          (do
+            (println "No external dependencies detected, running basic build.")
+            (basic-build! org-str)))
         (println "Success! Have a nice day :)"))))
   ;; sh uses futures in different threads, so shut them down to prevent delayed exit
   ;; calling sh in REPL doesn't have the hanging issue, so shutdown agents here.
