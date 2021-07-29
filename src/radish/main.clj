@@ -70,7 +70,8 @@
 
 (defn- remove-deps-node
   [node]
-  (let [new-content ["deps elided"]]
+  (let [msg [";; deps map commented out"]
+        new-content ["deps elided"]]
     (assoc node :content (vec new-content))))
 
 (defn remove-deps
@@ -432,14 +433,15 @@
       :else
       (let [org-str (slurp infile)
             outdir (safe-name (get-title org-str))
-            msg (str "Compiling " infile " into directory " outdir ".")]
-        (println msg)
+            msg (str "\nCompiling " infile " into directory " outdir ".")]
         (if (requires-advanced? org-str)
           (do
             (println "Detected external dependencies, running advanced build.")
+            (println msg)
             (advanced-build! org-str))
           (do
             (println "No external dependencies detected, running basic build.")
+            (println msg)
             (basic-build! org-str)))
         (println "Success! Have a nice day :)"))))
   ;; sh uses futures in different threads, so shut them down to prevent delayed exit

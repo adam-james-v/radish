@@ -485,7 +485,7 @@ in ~result-component~, ~js/scittle.core.eval_string~ is turned into ~js/radish.c
          '[reagent.dom :as rdom])
 
 (defn editor
-  [id state]
+  [id ns-str state]
   (let [cm (.fromTextArea  js/CodeMirror
                            (.getElementById js/document id)
                            #js {:mode "clojure"
@@ -494,7 +494,7 @@ in ~result-component~, ~js/scittle.core.eval_string~ is turned into ~js/radish.c
                                 :smartIndent true
                                 :tabSize 2})]
     (.on cm "change" (fn [_ _]
-                       (reset! state (.getValue cm))))
+                       (reset! state (str ns-str (.getValue cm)))))
     (.setSize cm "auto" "auto")))
 
 (defn renderable-element?
@@ -523,9 +523,9 @@ in ~result-component~, ~js/scittle.core.eval_string~ is turned into ~js/radish.c
                   (number? content))))))
 
 (defn result-component
-  [state]
-  (fn [state]
-    (let [result (try (js/scittle.core.eval_string @state)
+  [ns-str state]
+  (fn [ns-str state]
+    (let [result (try (js/scittle.core.eval_string (str ns-str @state))
                       (catch :default e
                         (.-message e)))]
       [:div.result
@@ -557,12 +557,12 @@ in ~result-component~, ~js/scittle.core.eval_string~ is turned into ~js/radish.c
         this-ns (if (contains-ns? src-str)
                   `'~(extract-ns src-str)
                   @current-ns)
-        xf-src-str (str "(in-ns " this-ns ")\n\n" src-str)
-        state (r/atom xf-src-str)]
+        ns-str (str "(in-ns " this-ns ")\n")
+        state (r/atom src-str)]
     (reset! current-ns this-ns) 
-    (rdom/render [:textarea {:id id} xf-src-str] parent)
-    (editor id state)
-    (rdom/render [result-component state] parent)))
+    (rdom/render [:textarea {:id id} src-str] parent)
+    (editor id ns-str state)
+    (rdom/render [result-component ns-str state] parent)))
 
 (defn run! []
   (let [blocks (vec (.getElementsByClassName js/document "src-clojure"))]
@@ -892,7 +892,8 @@ Basically, an 'advanced' radish build will automatically generate a scittle clon
 
 (defn- remove-deps-node
   [node]
-  (let [new-content ["deps elided"]]
+  (let [msg [";; deps map commented out"]
+        new-content ["deps elided"]]
     (assoc node :content (vec new-content))))
 
 (defn remove-deps
@@ -1272,14 +1273,15 @@ Basically, an 'advanced' radish build will automatically generate a scittle clon
       :else
       (let [org-str (slurp infile)
             outdir (safe-name (get-title org-str))
-            msg (str "Compiling " infile " into directory " outdir ".")]
-        (println msg)
+            msg (str "\nCompiling " infile " into directory " outdir ".")]
         (if (requires-advanced? org-str)
           (do
             (println "Detected external dependencies, running advanced build.")
+            (println msg)
             (advanced-build! org-str))
           (do
             (println "No external dependencies detected, running basic build.")
+            (println msg)
             (basic-build! org-str)))
         (println "Success! Have a nice day :)"))))
   ;; sh uses futures in different threads, so shut them down to prevent delayed exit

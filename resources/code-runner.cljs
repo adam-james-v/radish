@@ -2,7 +2,7 @@
          '[reagent.dom :as rdom])
 
 (defn editor
-  [id state]
+  [id ns-str state]
   (let [cm (.fromTextArea  js/CodeMirror
                            (.getElementById js/document id)
                            #js {:mode "clojure"
@@ -11,7 +11,7 @@
                                 :smartIndent true
                                 :tabSize 2})]
     (.on cm "change" (fn [_ _]
-                       (reset! state (.getValue cm))))
+                       (reset! state (str ns-str (.getValue cm)))))
     (.setSize cm "auto" "auto")))
 
 (defn renderable-element?
@@ -40,9 +40,9 @@
                   (number? content))))))
 
 (defn result-component
-  [state]
-  (fn [state]
-    (let [result (try (js/scittle.core.eval_string @state)
+  [ns-str state]
+  (fn [ns-str state]
+    (let [result (try (js/scittle.core.eval_string (str ns-str @state))
                       (catch :default e
                         (.-message e)))]
       [:div.result
@@ -74,12 +74,12 @@
         this-ns (if (contains-ns? src-str)
                   `'~(extract-ns src-str)
                   @current-ns)
-        xf-src-str (str "(in-ns " this-ns ")\n\n" src-str)
-        state (r/atom xf-src-str)]
+        ns-str (str "(in-ns " this-ns ")\n")
+        state (r/atom src-str)]
     (reset! current-ns this-ns) 
-    (rdom/render [:textarea {:id id} xf-src-str] parent)
-    (editor id state)
-    (rdom/render [result-component state] parent)))
+    (rdom/render [:textarea {:id id} src-str] parent)
+    (editor id ns-str state)
+    (rdom/render [result-component ns-str state] parent)))
 
 (defn run! []
   (let [blocks (vec (.getElementsByClassName js/document "src-clojure"))]
