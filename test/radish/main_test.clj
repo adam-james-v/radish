@@ -19,11 +19,8 @@
   (is (= (rad/get-title (:f get-title-test-org-strs)) "radish")))
 
 (deftest get-deps-test
-  (is (= (rad/get-deps (slurp "radish.org"))
+  (is (= (rad/get-deps (slurp "radish-logo.org"))
          '{:deps
-          {org.clojure/clojure #:mvn{:version "1.10.3"},
-           org.clojure/tools.cli #:mvn{:version "1.0.206"},
-           hiccup/hiccup #:mvn{:version "2.0.0-alpha2"},
-           orgmode/orgmode
-           {:git/url "https://github.com/bnbeckwith/orgmode",
-            :sha "722972c72b43c18a5cdbbc9c3e392b5ee9e2b503"}}})))
+           {io.github.adam-james-v/svg-clj #:mvn{:version "0.0.3-SNAPSHOT"},
+            hiccup/hiccup #:mvn{:version "2.0.0-alpha2"}}}))
+  (is (nil? (rad/get-deps (slurp "radish-basic.org")))))

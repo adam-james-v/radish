@@ -217,7 +217,6 @@ I'm creating the SVG structures without wrapping them in SVG tags so that I can 
 #+RESULTS[c51a0967154a120aa184beb9ded1e473aebbf0b0]:
 : #'radish-logo.draw/radish-leaves
 
-
 * Final Result
 Here's the final result, defined as ~rad~, which makes me chuckle.
 

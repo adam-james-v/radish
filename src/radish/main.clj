@@ -49,12 +49,25 @@
        (str/upper-case s)
        "#+RESULT"))))
 
+(defn match-deps-old?
+  [loc]
+  (let [node (zip/node loc)
+        {:keys [block content]} node]
+    (and (= block :src)
+         (str/includes? (apply str content) ":deps"))))
+
+;; read-string breaks when trying to read lines with ;;comments as it
+;; ignores them and basically thinks its reading an empty string (EOF error)
+;; read-string also chokes on a shebang line '#!/usr/bin/bb' for example
+
 (defn match-deps?
   [loc]
   (let [node (zip/node loc)
-        {:keys [type content]} node]
-    (and (= type :block)
-         (str/includes? (apply str content) ":deps"))))
+        {:keys [block attribs]} node]
+    (when (and (= block :src) (contains? (set attribs) "clojure"))
+      (let [src (read-string (str "[" (apply str (:content node)) "]"))
+            maybe-deps (filter map? src)]
+        (not (empty? (filter #(contains? % :deps) maybe-deps)))))))
 
 (defn match-ns?
   [loc]
@@ -128,15 +141,17 @@
 
 (defn get-deps
   [org-str]
-  (-> org-str
-      org/parse-str
-      org/zip
-      (get-nodes match-deps?)
-      first
-      :content
-      (->> (apply str))
-      read-string
-      (#(apply dissoc % (remove #{:deps} (keys %))))))
+  (let [m (-> org-str
+              org/parse-str
+              org/zip
+              (get-nodes match-deps?)
+              first)]
+    (when m
+      (->> m
+           :content
+           (apply str)
+           read-string
+           (#(apply dissoc % (remove #{:deps} (keys %))))))))
 
 ;; we abuse org-mode syntax only once for allowing inline radish config.
 ;; we just add 'radish-config' to a src block and we can get it via the attribs list
