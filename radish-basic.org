@@ -50,7 +50,7 @@ Org-mode allows you to display images inline, which can be quite useful when pai
 
 Browsers are also great places to render things; that's kind of their thing. Radish takes advantage of this by using scittle's Reagent plugin to render into the DOM. It's nothing special, but it works!
 
-If your code block's final result is a renderable data structure (hiccup), it will render it into a div below the results ~pre~ tag.
+If your code block's final result is a renderable data structure (hiccup), it will render it into a div below the code editor.
 
 #+begin_src clojure
 (defn rand-col
@@ -77,6 +77,6 @@ If your code block's final result is a renderable data structure (hiccup), it wi
 gradient-circle
 #+end_src
 
-This can surely be (ab)used in creative ways. Go ahead and try things out! Don't be shocked if you break the page though... if you manage to have Reagent render an invalid element into the DOM, it may completely wipe the page. And, I don't have any persistance, so you'll lose any code you've written.
+This can surely be (ab)used in creative ways. Go ahead and try things out! Don't be shocked if you break the page though... if you manage to have Reagent render an invalid element into the DOM, it may completely wipe the page. And, I don't have any persistence, so you'll lose any code you've written.
 
 Just keep in mind that this is a blog post, not an IDE and you should be alright.

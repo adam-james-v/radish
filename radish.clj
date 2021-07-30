@@ -10,6 +10,9 @@
         (tf/rotate 270)
         (tf/translate (utils/v* ctr [-1 -1])))))
 
+(svg (-> (bulb [[0 0] [55 80] [92 55] [104 0]])
+         (tf/style {:fill "slategray"})))
+
 (defn leaf
   [h & {:keys [mirror] :or {mirror false}}]
   (let [m (if mirror -1 1)
@@ -27,6 +30,9 @@
          (tf/rotate (* 315 m)) (tf/translate [(* -0.175 h m) (* 0.515 h)]))
      (-> (apply path/bezier (drop-last swoop-pts))
          (tf/rotate (* 330 m)) (tf/translate [(* -0.1 h m) (* 0.825 h)])))))
+
+(svg (-> (leaf 200)
+         (tf/style {:fill "limegreen"})))
 
 (defn linear-gradient
   [deg col-a col-b]
@@ -59,6 +65,8 @@
                    :stroke (str "url(#" gradient-id ")")})
         (->> (list [:defs gradient])))))
 
+(svg radish-bulb)
+
 (def radish-leaves
   (let [gradient (linear-gradient 103 "rgb(120,202,106)" "rgb(182,192,174)")
         gradient-id (get-in gradient [1 :id])]
@@ -73,14 +81,19 @@
                 :stroke (str "url(#" gradient-id ")")})
      (->> (list [:defs gradient])))))
 
-(let [[[_ leaves-grad] leaves] radish-leaves
-      [[_ bulb-grad] bulb] radish-bulb]
-  (-> (el/g
-       #_(-> (el/rect 500 500)
-           (tf/style {:fill "lavender"}))
-       leaves
-       (-> bulb (tf/translate [0 38]) (tf/style {:fill "rgba(244,131,120,0.2)"})))
-      (tf/translate [200 220])
-      (->> (list [:defs leaves-grad bulb-grad]))
-      (svg 400 400)
-      (svg! "radish.svg")))
+(svg radish-leaves)
+
+(def rad
+  (let [[[_ leaves-grad] leaves] radish-leaves
+        [[_ bulb-grad] bulb] radish-bulb]
+    (-> (el/g
+         (-> (el/rect 500 500)
+               (tf/style {:fill "lavender"}))
+         leaves
+         (-> bulb (tf/translate [0 38]) (tf/style {:fill "rgba(244,131,120,0.2)"})))
+        (tf/translate [200 220])
+        (->> (list [:defs leaves-grad bulb-grad]))
+        (svg 400 400)
+        (svg! "radish.svg"))))
+
+rad

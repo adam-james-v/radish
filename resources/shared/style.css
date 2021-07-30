@@ -1,5 +1,15 @@
+/*
+:root {
+  --bg: #ffecdc;
+  --col01: #ffbae1;
+  --col02: #bd6cea;
+  --col03: #ff42b4;
+  --col04: #5671ff;
+}
+*/
+
 html {
-  background: #ffecdc;
+  background-color: var(--bg);
 }
 
 #root {
@@ -18,7 +28,7 @@ body {
 }
 
 main {
-  max-width: 600px;
+  max-width: 620px;
   margin: 0 auto;
   padding: 20px 0 100px 0;
   color: #222;
@@ -31,7 +41,7 @@ main {
 }
 
 header {
-  color: #fef;
+  color: #ffeeff;
   font-size: 1.75em;
   width: 100%;
   height: 280px;
@@ -39,33 +49,38 @@ header {
   align-items: center;
   justify-content: center;
   text-align: center;
-  background-image: linear-gradient(to bottom right, #ffbae1, #bd6cea);
-  box-shadow: inset 0px -15px 28px -15px #444;
+  background-image: linear-gradient(to bottom right, var(--col01), var(--col02));
+  box-shadow: inset 0px -15px 28px -15px #666;
 }
 
+/*
 header h1 {
   text-shadow: 1px 1px rgba(250,250,250,0.1);
-  background: linear-gradient(to top right, #ff42b4, #5671ff);
+  background: linear-gradient(to top right, var(--col03), var(--col04));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
 }
+*/
+
+header h1 {
+  text-shadow: 1px 1px rgba(25,20,25,0.15);
+}
 
 footer {
-  color: #fef;
+  color: #ffeeff;
   width: 100%;
   height: 280px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-flow: column;
-  background-image: linear-gradient(to bottom right, #bd6cea, #ffbae1);
-  box-shadow: inset 0px 15px 28px -15px #444;
+  background-image: linear-gradient(to bottom right, var(--col02), var(--col01));
+  box-shadow: inset 0px 15px 28px -15px #666;
   text-shadow: 1px 1px rgba(0,0,0,0.4);
 }
                 
 .code-container {
   font-size: 14px;
-  max-width: 500px;
   margin: 35px auto;
   border-radius: 11px 11px 11px 11px;
   box-shadow: 0px 2px 8px 0px rgba(20, 20, 20, 0.2);
@@ -78,6 +93,12 @@ footer {
   margin-top: 0;
 }
 
+.code-container .src-clojure-ref {
+  background-color: #777;
+  font-size: 13px;
+  border-radius: 11px 11px 11px 11px;
+}
+
 .CodeMirror {
   padding-top: 10px;
   border-radius: 11px 11px 0 0;
@@ -85,8 +106,16 @@ footer {
 
 .result {
   background: rgba(120,120,120,0.15);
-  max-height: 400px;
-  overflow: auto;
+}
+
+.result .render {
+  padding: 10px;
+}
+
+.result code {
+  display: inline-block;
+  max-height: 180px;
+  overflow-y: auto;
 }
 
 pre {
@@ -146,12 +175,12 @@ hr {
 }
 
 a {
-  color: #5671ff;
+  color: var(--col03);
   text-decoration: none;
 }
 
 a:hover {
-  color: #ff42b4;
+  color: var(--col04);
   text-decoration: underline;
 }
 

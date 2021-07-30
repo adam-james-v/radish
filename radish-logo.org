@@ -6,10 +6,22 @@
 #+OPTIONS: toc:nil num:nil html-style:nil html-postamble:nil html-preamble:nil html5-fancy:t
 #+PROPERTY: header-args :cache yes :noweb yes :results value :mkdirp yes :padline yes :async
 
-A small literate program that generates the Radish Logo.
+A small literate program that generates the Radish Logo. I wanted to add a bit of design to the radish lib readme, and I figured I would tackle two projects in one:
+
+ - create a logo (editable for improvements later)
+ - write an org file with external deps to show the 'advanced-build' feature
+
+This project is successfully built from a single .org file where dependencies are automatically detected and used to generate a shadow-cljs project which is finally compiled and packaged into a post-ready directory containing all resources necessary to have an interactive site.
+
+I'm quite pleased with the result!
+
+** radish-config :noexport:
+#+begin_src clojure radish-config
+{:exclude-fns ['svg!]}
+#+end_src
 
 * deps
-#+begin_src clojure :tangle ./deps.edn
+#+begin_src clojure
 {:deps
   {io.github.adam-james-v/svg-clj {:mvn/version "0.0.3-SNAPSHOT"}
    hiccup/hiccup                  {:mvn/version "2.0.0-alpha2"}}}
@@ -77,6 +89,10 @@ A helper fn that multiplies every pt by [1 -1] to mirror along the x axis.
 | #'radish-logo.draw/flip-x |
 
 * drawing
+This whole project is just one drawing, but when I'm doing things programmatically, I like to break the drawing down into smaller bits. It's a subjective process where I kind of follow intuition and iteration to figure out which 'bits' make sense to turn into functions. For a drawing like this, it's fairly obvious to me right away that I'll need a 'bulb' and a 'leaf'. Then, I can style and transform the basic shapes to compose a final logo.
+
+** Bulb
+Start the drawing off by creating a function that combines two bezier curves to create a bulb shape.
 
 #+begin_src clojure :results value :tangle ./radish.clj
 (defn bulb
@@ -91,6 +107,18 @@ A helper fn that multiplies every pt by [1 -1] to mirror along the x axis.
         (tf/rotate 270)
         (tf/translate (utils/v* ctr [-1 -1])))))
 
+(svg (-> (bulb [[0 0] [55 80] [92 55] [104 0]])
+         (tf/style {:fill "slategray"})))
+#+end_src
+
+Play around with the control points to see the bulb change its shape. Fun stuff, I say!
+
+** Leaf
+A leaf function seems useful, but may be hard to parameterize fully. To keep it simple, I'm going to provide a single 'height' param and just make a leaf proportional to the h value.
+
+Notably, my svg library doesn't have a mirror transform function yet, so I have to incorporate the logic of mirroring the shape myself. It's not the most elegant solution, but it works, and shows how one might use a library while still building their own functions to solve unique problems unanticipated by library authors.
+
+#+begin_src clojure :results value :tangle ./radish.clj
 (defn leaf
   [h & {:keys [mirror] :or {mirror false}}]
   (let [m (if mirror -1 1)
@@ -109,6 +137,16 @@ A helper fn that multiplies every pt by [1 -1] to mirror along the x axis.
      (-> (apply path/bezier (drop-last swoop-pts))
          (tf/rotate (* 330 m)) (tf/translate [(* -0.1 h m) (* 0.825 h)])))))
 
+(svg (-> (leaf 200)
+         (tf/style {:fill "limegreen"})))
+#+end_src
+
+** Linear Gradient
+SVG is pretty great, but I don't completely love how things like patterns and gradients are defined. You have to build the structure into a ~<defs>~ tag within an SVG element. You define unique IDs for each gradient or pattern and can then use them as fills wit ~url(#id)~. But that process isn't well handled yet by my svg-clj library, as it requires the ability to hold onto defs globally and 'inject' them into the svg at the end. There's clearly a few ways to handle this, but I don't have an ideal approach yet.
+
+As such, I have a somewhat hacky approach in this post, but it gets the job done (for now).
+
+#+begin_src clojure :results value :tangle ./radish.clj
 (defn linear-gradient
   [deg col-a col-b]
   (let [[x1 y1] (utils/rotate-pt-around-center [0 50] deg [50 50])
@@ -121,13 +159,17 @@ A helper fn that multiplies every pt by [1 -1] to mirror along the x axis.
                       :y2 (str y2 "%")}
      [:stop {:offset "0%" :stop-color col-a}]
      [:stop {:offset "100%" :stop-color col-b}]]))
-
 #+end_src
 
 #+RESULTS[f802464f326e5fffbda565a2ab10d26087ff608d]:
 | #'radish-logo.draw/bulb            |
 | #'radish-logo.draw/leaf            |
 | #'radish-logo.draw/linear-gradient |
+
+** Compose and Style
+Using the bulb, leaf, and linear-gradient functions, I can now add a bit of polish.
+
+I'm creating the SVG structures without wrapping them in SVG tags so that I can incorporate things into one final SVG tag later.
 
 #+begin_src clojure :results value :tangle ./radish.clj
 (def radish-bulb
@@ -147,6 +189,8 @@ A helper fn that multiplies every pt by [1 -1] to mirror along the x axis.
                    :stroke-linecap "round"
                    :stroke (str "url(#" gradient-id ")")})
         (->> (list [:defs gradient])))))
+
+(svg radish-bulb)
 #+end_src
 
 #+RESULTS[095f0afb9fde91550d3dbc4f8f2e72452599e26c]:
@@ -166,37 +210,39 @@ A helper fn that multiplies every pt by [1 -1] to mirror along the x axis.
                 :stroke-linecap "round"
                 :stroke (str "url(#" gradient-id ")")})
      (->> (list [:defs gradient])))))
+
+(svg radish-leaves)
 #+end_src
 
 #+RESULTS[c51a0967154a120aa184beb9ded1e473aebbf0b0]:
 : #'radish-logo.draw/radish-leaves
 
 
+* Final Result
+Here's the final result, defined as ~rad~, which makes me chuckle.
 
 #+begin_src clojure :results file :tangle ./radish.clj
-(let [[[_ leaves-grad] leaves] radish-leaves
-      [[_ bulb-grad] bulb] radish-bulb]
-  (-> (el/g
-       #_(-> (el/rect 500 500)
-           (tf/style {:fill "lavender"}))
-       leaves
-       (-> bulb (tf/translate [0 38]) (tf/style {:fill "rgba(244,131,120,0.2)"})))
-      (tf/translate [200 220])
-      (->> (list [:defs leaves-grad bulb-grad]))
-      (svg 400 400)
-      (svg! "radish.svg")))
+(def rad
+  (let [[[_ leaves-grad] leaves] radish-leaves
+        [[_ bulb-grad] bulb] radish-bulb]
+    (-> (el/g
+         (-> (el/rect 500 500)
+               (tf/style {:fill "lavender"}))
+         leaves
+         (-> bulb (tf/translate [0 38]) (tf/style {:fill "rgba(244,131,120,0.2)"})))
+        (tf/translate [200 220])
+        (->> (list [:defs leaves-grad bulb-grad]))
+        (svg 400 400)
+        (svg! "radish.svg"))))
+
+rad
 #+end_src
 
-#+RESULTS[7c8f071530f4d768475793c380f6cd377467819c]:
-[[file:radish.svg]]
+#+RESULTS[c9a0452f8abe47a17af25fb395cb7c0ec3ee5b4c]:
+| class clojure.lang.Compiler$CompilerException                     |
+| #object[clojure.lang.Var$Unbound 0x6e39a90 "Unbound: #'user/rad"] |
 
-* other-ns
-This is just to see if I can grab multiple NS declarations.
+* Thoughts
+I'm very pleased with the result of the radish advanced-build! function so far. There are a few improvements to be made with the library itself, and I want to figure out a way to incorporate the shadow-cljs compilation directly, instead of the (at time of writing this) 'solution' of shelling out and spawning another clojure process. This does give me the output I want, though, so it's not a loss, just a step in the right direction!
 
-#+begin_src clojure
-(ns radish-logo.misc
-  (:require [clojure.string :as str]))
-
-(str/join " " ["Some" "thing"])
-
-#+end_src
+Thanks for reading.

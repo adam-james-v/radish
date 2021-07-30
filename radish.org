@@ -220,9 +220,13 @@ This script takes a reflect-config.json and cleans it up by removing unnecessary
 # Radish
 A kinda-cool org-mode -> interactive blog post tool written with and for Clojure(script).
 
-Here's an example post created with this tool:
+Here are two example posts created with this tool:
 
-<a href="https://adam-james-v.github.io/posts/radish-basic-example/index.html">Radish Basic Example</a>
+<a href="https://adam-james-v.github.io/posts/radish-basic-example/index.html">Radish Basic Example</a> - Uses Scittle with no external dependencies incorporated into the build.
+
+
+<a href="https://adam-james-v.github.io/posts/radish-logo/index.html">Radish Basic Example</a> - Uses Radish to automatically create and compile a shadow-cljs project to incorporate external CLJS dependencies into the (cloned) Scittle interpreter.
+
 
 ## Why Radish?
 A friend sent me a meme about radishes while I was thinking of a name for this project. I chuckled, then figured it's a good enough name for a small project like this.
@@ -292,9 +296,19 @@ To do this, the following things have to happen:
 
 * resources
 ** css
-#+BEGIN_SRC css :tangle ./resources/style.css
+#+BEGIN_SRC css :tangle ./resources/shared/style.css
+/*
+:root {
+  --bg: #ffecdc;
+  --col01: #ffbae1;
+  --col02: #bd6cea;
+  --col03: #ff42b4;
+  --col04: #5671ff;
+}
+,*/
+
 html {
-  background: #ffecdc;
+  background-color: var(--bg);
 }
 
 #root {
@@ -313,7 +327,7 @@ body {
 }
 
 main {
-  max-width: 600px;
+  max-width: 620px;
   margin: 0 auto;
   padding: 20px 0 100px 0;
   color: #222;
@@ -326,7 +340,7 @@ main {
 }
 
 header {
-  color: #fef;
+  color: #ffeeff;
   font-size: 1.75em;
   width: 100%;
   height: 280px;
@@ -334,33 +348,38 @@ header {
   align-items: center;
   justify-content: center;
   text-align: center;
-  background-image: linear-gradient(to bottom right, #ffbae1, #bd6cea);
-  box-shadow: inset 0px -15px 28px -15px #444;
+  background-image: linear-gradient(to bottom right, var(--col01), var(--col02));
+  box-shadow: inset 0px -15px 28px -15px #666;
 }
 
+/*
 header h1 {
   text-shadow: 1px 1px rgba(250,250,250,0.1);
-  background: linear-gradient(to top right, #ff42b4, #5671ff);
+  background: linear-gradient(to top right, var(--col03), var(--col04));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
 }
+,*/
+
+header h1 {
+  text-shadow: 1px 1px rgba(25,20,25,0.15);
+}
 
 footer {
-  color: #fef;
+  color: #ffeeff;
   width: 100%;
   height: 280px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-flow: column;
-  background-image: linear-gradient(to bottom right, #bd6cea, #ffbae1);
-  box-shadow: inset 0px 15px 28px -15px #444;
+  background-image: linear-gradient(to bottom right, var(--col02), var(--col01));
+  box-shadow: inset 0px 15px 28px -15px #666;
   text-shadow: 1px 1px rgba(0,0,0,0.4);
 }
                 
 .code-container {
   font-size: 14px;
-  max-width: 500px;
   margin: 35px auto;
   border-radius: 11px 11px 11px 11px;
   box-shadow: 0px 2px 8px 0px rgba(20, 20, 20, 0.2);
@@ -373,6 +392,12 @@ footer {
   margin-top: 0;
 }
 
+.code-container .src-clojure-ref {
+  background-color: #777;
+  font-size: 13px;
+  border-radius: 11px 11px 11px 11px;
+}
+
 .CodeMirror {
   padding-top: 10px;
   border-radius: 11px 11px 0 0;
@@ -380,8 +405,16 @@ footer {
 
 .result {
   background: rgba(120,120,120,0.15);
-  max-height: 400px;
-  overflow: auto;
+}
+
+.result .render {
+  padding: 10px;
+}
+
+.result code {
+  display: inline-block;
+  max-height: 180px;
+  overflow-y: auto;
 }
 
 pre {
@@ -441,12 +474,12 @@ hr {
 }
 
 a {
-  color: #5671ff;
+  color: var(--col03);
   text-decoration: none;
 }
 
 a:hover {
-  color: #ff42b4;
+  color: var(--col04);
   text-decoration: underline;
 }
 
@@ -531,8 +564,8 @@ in ~result-component~, ~js/scittle.core.eval_string~ is turned into ~js/radish.c
       [:div.result
        [:pre
         [:div "RESULT:"]
-        [:code (if result (str result) "nil")]
-        (when (renderable? result) [:div result])]])))
+        (when (renderable? result) [:div.render result])
+        [:code (if result (str result) "nil")]]])))
 
 (def current-ns (atom `'~'user))
 
@@ -548,7 +581,7 @@ in ~result-component~, ~js/scittle.core.eval_string~ is turned into ~js/radish.c
        (filter (fn [[sym & _]] (= sym 'ns))) ;; drop any code that isn't a ns decl
        last
        second))
-  
+
 (defn run-src
   [elem]
   (let [id (gensym "src-")
@@ -820,7 +853,7 @@ Basically, an 'advanced' radish build will automatically generate a scittle clon
 (ns radish.main
   (:require [clojure.string :as str]
             [clojure.zip :as zip]
-            [clojure.java.shell :refer [sh with-sh-dir]]
+            [clojure.java.shell :refer [sh]]
             [clojure.tools.cli :as cli]
             [hiccup.core :refer [html]]
             [hiccup.page :as page]
@@ -842,8 +875,29 @@ Basically, an 'advanced' radish build will automatically generate a scittle clon
       (if-let [matcher-result (matcher loc)]
         (let [new-loc (zip/edit loc editor)]
           (if (not (= (zip/node new-loc) (zip/node loc)))
-            (recur (zip/next new-loc))))
+            (recur (zip/next new-loc))
+            (recur (zip/next loc))))
         (recur (zip/next loc))))))
+
+(defn get-nodes
+  [zipper matcher]
+  (loop [loc zipper
+         acc []]
+    (if (zip/end? loc)
+      acc
+      (if (matcher loc)
+        (recur (zip/next loc) (conj acc (zip/node loc)))
+        (recur (zip/next loc) acc)))))
+
+#+end_src
+
+** node-matchers
+#+begin_src clojure :tangle ./src/radish/main.clj
+(defn match-src?
+  [loc]
+  (let [node (zip/node loc)
+        {:keys [block]} node]
+    (= block :src)))
 
 (defn match-result?
   [loc]
@@ -854,13 +908,12 @@ Basically, an 'advanced' radish build will automatically generate a scittle clon
        (str/upper-case s)
        "#+RESULT"))))
 
-;; make it a requirement that the deps src be headlined as deps or deps.edn
 (defn match-deps?
   [loc]
   (let [node (zip/node loc)
-        {:keys [type text]} node]
-    (and (= type :headline)
-         (str/starts-with? text "deps"))))
+        {:keys [type content]} node]
+    (and (= type :block)
+         (str/includes? (apply str content) ":deps"))))
 
 (defn match-ns?
   [loc]
@@ -877,7 +930,11 @@ Basically, an 'advanced' radish build will automatically generate a scittle clon
   [loc]
   (let [node (zip/node loc)]
     (= (:type node) :headline)))
-    
+
+#+end_src
+
+** tree-node-editors
+#+begin_src clojure :tangle ./src/radish/main.clj
 ;; don't remove the entire node as the #+RESULT is within a paragraph
 ;; which means there may be required content following the results.
 (defn- remove-result
@@ -890,30 +947,19 @@ Basically, an 'advanced' radish build will automatically generate a scittle clon
   (let [org-zipper (org/zip org)]
     (tree-edit org-zipper match-result? remove-result)))
 
-(defn- remove-deps-node
+(defn- retag-deps-node
   [node]
-  (let [msg [";; deps map commented out"]
-        new-content ["deps elided"]]
-    (assoc node :content (vec new-content))))
+  (let [new-attribs ["clojure-ref"]]
+    (assoc node :attribs new-attribs)))
 
-(defn remove-deps
+(defn retag-deps
   [org]
   (let [org-zipper (org/zip org)]
-    (tree-edit org-zipper match-deps? remove-deps-node)))
-
-(defn get-nodes
-  [zipper matcher]
-  (loop [loc zipper
-         acc []]
-    (if (zip/end? loc)
-      acc
-      (if (matcher loc)
-        (recur (zip/next loc) (conj acc (zip/node loc)))
-        (recur (zip/next loc) acc)))))
+    (tree-edit org-zipper match-deps? retag-deps-node)))
 
 #+end_src
 
-** utils
+** getters
 #+begin_src clojure :tangle ./src/radish/main.clj
 (defn get-headlines
   [org]
@@ -953,11 +999,37 @@ Basically, an 'advanced' radish build will automatically generate a scittle clon
       org/parse-str
       org/zip
       (get-nodes match-deps?)
-      (get-in [0 :content 0 :content])
+      first
+      :content
       (->> (apply str))
       read-string
       (#(apply dissoc % (remove #{:deps} (keys %))))))
 
+;; we abuse org-mode syntax only once for allowing inline radish config.
+;; we just add 'radish-config' to a src block and we can get it via the attribs list
+;; it means nothing in org-mode context, but will also not cause issues (I am pretty sure)
+(defn get-radish-config
+  [org-str]
+  (let [srcs (-> org-str
+                 org/parse-str
+                 org/zip
+                 (get-nodes match-src?)
+                 (->> (filter
+                       (fn [{:keys [attribs]}]
+                         (not (empty? (filter #{"radish-config"} attribs)))))))]
+    (if (empty? srcs)
+      {}
+      (->> srcs
+           first
+           :content
+           (apply str)
+           (#(str/replace % "'" "")) ;; hack to prevent (quote 'sym) issue. in comment-src-ndes
+           read-string))))
+
+#+end_src
+
+** namespace-editor
+#+begin_src clojure :tangle ./src/radish/main.clj
 (defn- keep-require
   [ns-form]
   (first
@@ -1039,6 +1111,38 @@ Basically, an 'advanced' radish build will automatically generate a scittle clon
 ;; gdaythisisben from Twitch
 ;; (__(o_o)__)
 ;; meditating with parens
+#+end_src
+
+** src-editor
+Some vars are unneeded in a Browser context, like an svg! fn which spits a file so that org-mode can render it in the document. The idea is to edit all src nodes and replace these var definitions and invocations with commented versions. This leaves the source basically intact yet doesn't lead to invalid code in the browser.
+
+#+begin_src clojure :tangle ./src/radish/main.clj
+;; for more trustworthy results, it may be wise to implement this
+;; with a proper reader that adjusts the src, instead of simple string replacements
+;; for example, this will break if a user has a space between the open paren
+;; and the fn name. That may be rare, but it's not impossible, and could be very confusing.
+(defn- comment-content
+  ([sym-list content] (comment-content (rest sym-list) (first sym-list) content))
+  ([sym-list sym content]
+   (if sym
+     (let [new-content (->> content
+                            ;; this can still match incorrect fns...
+                            (mapv #(str/replace % (str "(defn " sym) (str "#_(defn " sym)))
+                            (mapv #(str/replace % (str "(" sym " ") (str "#_(" sym " "))))]
+       (recur (vec (rest sym-list)) (first sym-list) new-content))
+     content)))
+
+(defn- comment-src-node
+  [sym-list node]
+  (let [new-content (comment-content sym-list (:content node))]
+    (assoc node :content new-content)))
+
+(defn comment-src-nodes
+  [org sym-list]
+  (let [sym-list (filterv #(not= (str/trim (name %)) "") sym-list)
+        org-zipper (org/zip org)
+        edit-fn (partial comment-src-node sym-list)]
+    (tree-edit org-zipper match-src? edit-fn)))
 
 #+end_src
 
@@ -1050,17 +1154,32 @@ Basically, an 'advanced' radish build will automatically generate a scittle clon
     [:div.code-container
      [:pre {:class class} (str/join "\n" (:content x))]]))
 
+(defn org-content*
+  [org-str]
+  (let [title (get-title org-str)
+        author (get-author org-str)
+        config (get-radish-config org-str)]
+    (-> org-str
+        org/parse-str
+        retag-deps
+        remove-results
+        clean-namespace-decls
+        (comment-src-nodes (:exclude-fns config))
+        hiccupify)))
+
 (defn org-content
   [org-str]
   (let [title (get-title org-str)
-        author (get-author org-str)]
+        author (get-author org-str)
+        config (get-radish-config org-str)]
     (list
      [:header [:h1 title]]
      [:main (-> org-str
                 org/parse-str
-                remove-deps
+                retag-deps
                 remove-results
                 clean-namespace-decls
+                (comment-src-nodes (:exclude-fns config))
                 hiccupify)]
      [:footer
       (when author
@@ -1105,6 +1224,23 @@ Basically, an 'advanced' radish build will automatically generate a scittle clon
           (str/replace code-runner-str "js/scittle.core.eval_string" "js/radish.core.eval_string")
           code-runner-str)]]
       org-content))))
+
+(defn- rand-col
+  []
+  (str "rgb("
+       (+ 100 (rand-int 155)) ","
+       (+ 100 (rand-int 155)) ","
+       (+ 100 (rand-int 155)) ")"))
+
+(defn- rand-cols-css
+  []
+  (str/join "\n" [":root {"
+                  "  --bg: #ffecdc;"
+                  (str "  --col01: " (rand-col) ";")
+                  (str "  --col02: " (rand-col) ";")
+                  (str "  --col03: " (rand-col) ";")
+                  (str "  --col04: " (rand-col) ";")
+                  "}\n\n"]))
 #+end_src
 
 ** basic-build
@@ -1112,14 +1248,16 @@ Basically, an 'advanced' radish build will automatically generate a scittle clon
 (defn basic-build!
   [org-str]
   (let [name (safe-name (get-title org-str))
-        index (binding [*user-src-fn* src-fn] (org->site org-str))]
+        index (binding [*user-src-fn* src-fn] (org->site org-str))
+        style (str (rand-cols-css)
+                   (slurp (clojure.java.io/resource "shared/style.css")))]
     (sh "mkdir" "-p" name)
-    (doseq [file ["style.css"
-                  "codemirror.css"
+    (doseq [file ["codemirror.css"
                   "nord.css"
                   "codemirror.js"
                   "clojure.js"]]
       (spit (str name "/" file) (slurp (clojure.java.io/resource (str "shared/" file)))))
+    (spit (str name "/style.css") style)
     (spit (str name "/index.html") index)))
 #+end_src
 
@@ -1207,11 +1345,6 @@ Basically, an 'advanced' radish build will automatically generate a scittle clon
     (spit (str name "/deps.edn") (prepare-deps org-str))
     (spit (str name "/src/radish/radns.cljs") (radish-ns-src-str org-str))))
 
-(defn- fix-env-path
-  []
-  (let [env (into {} (System/getenv))]
-    (update env "PATH" #(str % ":/usr/local/bin"))))
-
 (defn- run-radish-build!
   [org-str]
   (prepare-radish-project! org-str)
@@ -1219,27 +1352,28 @@ Basically, an 'advanced' radish build will automatically generate a scittle clon
         config (shadow-cljs-config org-str)]
     ;; don't know how to do this within same process yet
     (sh "/usr/local/bin/clojure" "-M" "-m" "shadow.cljs.devtools.cli" "release" ":main"
-        :env (fix-env-path)
         :dir name)))
 
 (defn advanced-build!
   [org-str]
   (let [name (safe-name (get-title org-str))
         build-name (str name "-build")
-        index (binding [*user-src-fn* src-fn] (org->site org-str :advanced))]
+        index (binding [*user-src-fn* src-fn] (org->site org-str :advanced))
+        style (str (rand-cols-css)
+                   (slurp (clojure.java.io/resource "shared/style.css")))]
     (run-radish-build! org-str)
     (sh "mkdir" "-p" name)
     (sh "cp"
         (str build-name "/compiled/radish.js")
         (str build-name "/compiled/radish.reagent.js")
         name)
-    #_(sh "rm" "-rf" build-name)
-    (doseq [file ["style.css"
-                  "codemirror.css"
+    (sh "rm" "-rf" build-name)
+    (doseq [file ["codemirror.css"
                   "nord.css"
                   "codemirror.js"
                   "clojure.js"]]
       (spit (str name "/" file) (slurp (clojure.java.io/resource (str "shared/" file)))))
+    (spit (str name "/style.css") style)
     (spit (str name "/index.html") index)))
 
 #+end_src

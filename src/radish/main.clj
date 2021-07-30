@@ -1,7 +1,7 @@
 (ns radish.main
   (:require [clojure.string :as str]
             [clojure.zip :as zip]
-            [clojure.java.shell :refer [sh with-sh-dir]]
+            [clojure.java.shell :refer [sh]]
             [clojure.tools.cli :as cli]
             [hiccup.core :refer [html]]
             [hiccup.page :as page]
@@ -20,8 +20,25 @@
       (if-let [matcher-result (matcher loc)]
         (let [new-loc (zip/edit loc editor)]
           (if (not (= (zip/node new-loc) (zip/node loc)))
-            (recur (zip/next new-loc))))
+            (recur (zip/next new-loc))
+            (recur (zip/next loc))))
         (recur (zip/next loc))))))
+
+(defn get-nodes
+  [zipper matcher]
+  (loop [loc zipper
+         acc []]
+    (if (zip/end? loc)
+      acc
+      (if (matcher loc)
+        (recur (zip/next loc) (conj acc (zip/node loc)))
+        (recur (zip/next loc) acc)))))
+
+(defn match-src?
+  [loc]
+  (let [node (zip/node loc)
+        {:keys [block]} node]
+    (= block :src)))
 
 (defn match-result?
   [loc]
@@ -32,13 +49,12 @@
        (str/upper-case s)
        "#+RESULT"))))
 
-;; make it a requirement that the deps src be headlined as deps or deps.edn
 (defn match-deps?
   [loc]
   (let [node (zip/node loc)
-        {:keys [type text]} node]
-    (and (= type :headline)
-         (str/starts-with? text "deps"))))
+        {:keys [type content]} node]
+    (and (= type :block)
+         (str/includes? (apply str content) ":deps"))))
 
 (defn match-ns?
   [loc]
@@ -55,7 +71,7 @@
   [loc]
   (let [node (zip/node loc)]
     (= (:type node) :headline)))
-    
+
 ;; don't remove the entire node as the #+RESULT is within a paragraph
 ;; which means there may be required content following the results.
 (defn- remove-result
@@ -68,26 +84,15 @@
   (let [org-zipper (org/zip org)]
     (tree-edit org-zipper match-result? remove-result)))
 
-(defn- remove-deps-node
+(defn- retag-deps-node
   [node]
-  (let [msg [";; deps map commented out"]
-        new-content ["deps elided"]]
-    (assoc node :content (vec new-content))))
+  (let [new-attribs ["clojure-ref"]]
+    (assoc node :attribs new-attribs)))
 
-(defn remove-deps
+(defn retag-deps
   [org]
   (let [org-zipper (org/zip org)]
-    (tree-edit org-zipper match-deps? remove-deps-node)))
-
-(defn get-nodes
-  [zipper matcher]
-  (loop [loc zipper
-         acc []]
-    (if (zip/end? loc)
-      acc
-      (if (matcher loc)
-        (recur (zip/next loc) (conj acc (zip/node loc)))
-        (recur (zip/next loc) acc)))))
+    (tree-edit org-zipper match-deps? retag-deps-node)))
 
 (defn get-headlines
   [org]
@@ -127,10 +132,32 @@
       org/parse-str
       org/zip
       (get-nodes match-deps?)
-      (get-in [0 :content 0 :content])
+      first
+      :content
       (->> (apply str))
       read-string
       (#(apply dissoc % (remove #{:deps} (keys %))))))
+
+;; we abuse org-mode syntax only once for allowing inline radish config.
+;; we just add 'radish-config' to a src block and we can get it via the attribs list
+;; it means nothing in org-mode context, but will also not cause issues (I am pretty sure)
+(defn get-radish-config
+  [org-str]
+  (let [srcs (-> org-str
+                 org/parse-str
+                 org/zip
+                 (get-nodes match-src?)
+                 (->> (filter
+                       (fn [{:keys [attribs]}]
+                         (not (empty? (filter #{"radish-config"} attribs)))))))]
+    (if (empty? srcs)
+      {}
+      (->> srcs
+           first
+           :content
+           (apply str)
+           (#(str/replace % "'" "")) ;; hack to prevent (quote 'sym) issue. in comment-src-ndes
+           read-string))))
 
 (defn- keep-require
   [ns-form]
@@ -214,23 +241,65 @@
 ;; (__(o_o)__)
 ;; meditating with parens
 
+;; for more trustworthy results, it may be wise to implement this
+;; with a proper reader that adjusts the src, instead of simple string replacements
+;; for example, this will break if a user has a space between the open paren
+;; and the fn name. That may be rare, but it's not impossible, and could be very confusing.
+(defn- comment-content
+  ([sym-list content] (comment-content (rest sym-list) (first sym-list) content))
+  ([sym-list sym content]
+   (if sym
+     (let [new-content (->> content
+                            ;; this can still match incorrect fns...
+                            (mapv #(str/replace % (str "(defn " sym) (str "#_(defn " sym)))
+                            (mapv #(str/replace % (str "(" sym " ") (str "#_(" sym " "))))]
+       (recur (vec (rest sym-list)) (first sym-list) new-content))
+     content)))
+
+(defn- comment-src-node
+  [sym-list node]
+  (let [new-content (comment-content sym-list (:content node))]
+    (assoc node :content new-content)))
+
+(defn comment-src-nodes
+  [org sym-list]
+  (let [sym-list (filterv #(not= (str/trim (name %)) "") sym-list)
+        org-zipper (org/zip org)
+        edit-fn (partial comment-src-node sym-list)]
+    (tree-edit org-zipper match-src? edit-fn)))
+
 (defn src-fn
   [x]
   (let [class (str "src-" (first (:attribs x)))]
     [:div.code-container
      [:pre {:class class} (str/join "\n" (:content x))]]))
 
+(defn org-content*
+  [org-str]
+  (let [title (get-title org-str)
+        author (get-author org-str)
+        config (get-radish-config org-str)]
+    (-> org-str
+        org/parse-str
+        retag-deps
+        remove-results
+        clean-namespace-decls
+        (comment-src-nodes (:exclude-fns config))
+        hiccupify)))
+
 (defn org-content
   [org-str]
   (let [title (get-title org-str)
-        author (get-author org-str)]
+        author (get-author org-str)
+        config (get-radish-config org-str)]
     (list
      [:header [:h1 title]]
      [:main (-> org-str
                 org/parse-str
-                remove-deps
+                retag-deps
                 remove-results
                 clean-namespace-decls
+                (comment-src-nodes (:exclude-fns config))
                 hiccupify)]
      [:footer
       (when author
@@ -276,17 +345,36 @@
           code-runner-str)]]
       org-content))))
 
+(defn- rand-col
+  []
+  (str "rgb("
+       (+ 100 (rand-int 155)) ","
+       (+ 100 (rand-int 155)) ","
+       (+ 100 (rand-int 155)) ")"))
+
+(defn- rand-cols-css
+  []
+  (str/join "\n" [":root {"
+                  "  --bg: #ffecdc;"
+                  (str "  --col01: " (rand-col) ";")
+                  (str "  --col02: " (rand-col) ";")
+                  (str "  --col03: " (rand-col) ";")
+                  (str "  --col04: " (rand-col) ";")
+                  "}\n\n"]))
+
 (defn basic-build!
   [org-str]
   (let [name (safe-name (get-title org-str))
-        index (binding [*user-src-fn* src-fn] (org->site org-str))]
+        index (binding [*user-src-fn* src-fn] (org->site org-str))
+        style (str (rand-cols-css)
+                   (slurp (clojure.java.io/resource "shared/style.css")))]
     (sh "mkdir" "-p" name)
-    (doseq [file ["style.css"
-                  "codemirror.css"
+    (doseq [file ["codemirror.css"
                   "nord.css"
                   "codemirror.js"
                   "clojure.js"]]
       (spit (str name "/" file) (slurp (clojure.java.io/resource (str "shared/" file)))))
+    (spit (str name "/style.css") style)
     (spit (str name "/index.html") index)))
 
 ;; extra deps for the shadow-cljs compilation
@@ -371,11 +459,6 @@
     (spit (str name "/deps.edn") (prepare-deps org-str))
     (spit (str name "/src/radish/radns.cljs") (radish-ns-src-str org-str))))
 
-(defn- fix-env-path
-  []
-  (let [env (into {} (System/getenv))]
-    (update env "PATH" #(str % ":/usr/local/bin"))))
-
 (defn- run-radish-build!
   [org-str]
   (prepare-radish-project! org-str)
@@ -383,27 +466,28 @@
         config (shadow-cljs-config org-str)]
     ;; don't know how to do this within same process yet
     (sh "/usr/local/bin/clojure" "-M" "-m" "shadow.cljs.devtools.cli" "release" ":main"
-        :env (fix-env-path)
         :dir name)))
 
 (defn advanced-build!
   [org-str]
   (let [name (safe-name (get-title org-str))
         build-name (str name "-build")
-        index (binding [*user-src-fn* src-fn] (org->site org-str :advanced))]
+        index (binding [*user-src-fn* src-fn] (org->site org-str :advanced))
+        style (str (rand-cols-css)
+                   (slurp (clojure.java.io/resource "shared/style.css")))]
     (run-radish-build! org-str)
     (sh "mkdir" "-p" name)
     (sh "cp"
         (str build-name "/compiled/radish.js")
         (str build-name "/compiled/radish.reagent.js")
         name)
-    #_(sh "rm" "-rf" build-name)
-    (doseq [file ["style.css"
-                  "codemirror.css"
+    (sh "rm" "-rf" build-name)
+    (doseq [file ["codemirror.css"
                   "nord.css"
                   "codemirror.js"
                   "clojure.js"]]
       (spit (str name "/" file) (slurp (clojure.java.io/resource (str "shared/" file)))))
+    (spit (str name "/style.css") style)
     (spit (str name "/index.html") index)))
 
 (def cli-options

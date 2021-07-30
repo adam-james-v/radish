@@ -3,9 +3,13 @@
 # Radish
 A kinda-cool org-mode -> interactive blog post tool written with and for Clojure(script).
 
-Here's an example post created with this tool:
+Here are two example posts created with this tool:
 
-<a href="https://adam-james-v.github.io/posts/radish-basic-example/index.html">Radish Basic Example</a>
+<a href="https://adam-james-v.github.io/posts/radish-basic-example/index.html">Radish Basic Example</a> - Uses Scittle with no external dependencies incorporated into the build.
+
+
+<a href="https://adam-james-v.github.io/posts/radish-logo/index.html">Radish Basic Example</a> - Uses Radish to automatically create and compile a shadow-cljs project to incorporate external CLJS dependencies into the (cloned) Scittle interpreter.
+
 
 ## Why Radish?
 A friend sent me a meme about radishes while I was thinking of a name for this project. I chuckled, then figured it's a good enough name for a small project like this.

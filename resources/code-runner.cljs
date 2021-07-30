@@ -48,8 +48,8 @@
       [:div.result
        [:pre
         [:div "RESULT:"]
-        [:code (if result (str result) "nil")]
-        (when (renderable? result) [:div result])]])))
+        (when (renderable? result) [:div.render result])
+        [:code (if result (str result) "nil")]]])))
 
 (def current-ns (atom `'~'user))
 
@@ -65,7 +65,7 @@
        (filter (fn [[sym & _]] (= sym 'ns))) ;; drop any code that isn't a ns decl
        last
        second))
-  
+
 (defn run-src
   [elem]
   (let [id (gensym "src-")
