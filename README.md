@@ -5,10 +5,10 @@ A kinda-cool org-mode -> interactive blog post tool written with and for Clojure
 
 Here are two example posts created with this tool:
 
-<a href="https://adam-james-v.github.io/posts/radish-basic-example/index.html">Radish Basic Example</a> - Uses Scittle with no external dependencies incorporated into the build.
+<a href="https://adam-james-v.github.io/posts/radish-basic-example/index.html">Radish Basic Example</a> - (Basic Build) Uses Scittle with no external dependencies incorporated into the build.
 
 
-<a href="https://adam-james-v.github.io/posts/radish-logo/index.html">Radish Basic Example</a> - Uses Radish to automatically create and compile a shadow-cljs project to incorporate external CLJS dependencies into the (cloned) Scittle interpreter.
+<a href="https://adam-james-v.github.io/posts/radish-logo/index.html">Radish Logo</a> - (Advanced Build) Uses Radish to automatically create and compile a shadow-cljs project to incorporate external CLJS dependencies into the (cloned) Scittle interpreter.
 
 
 ## Why Radish?
