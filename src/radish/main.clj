@@ -343,8 +343,10 @@
         "clojure.js")
        ;; Always include React and ReactDOM
        (page/include-js
-        "https://unpkg.com/react@17/umd/react.production.min.js"
-        "https://unpkg.com/react-dom@17/umd/react-dom.production.min.js")
+        "react.production.min.js"
+        "react-dom.production.min.js"
+        #_"https://unpkg.com/react@17/umd/react.production.min.js"
+        #_"https://unpkg.com/react-dom@17/umd/react-dom.production.min.js")
        (if advanced?
          ;; include compiled js
          (page/include-js
@@ -387,7 +389,9 @@
     (doseq [file ["codemirror.css"
                   "nord.css"
                   "codemirror.js"
-                  "clojure.js"]]
+                  "clojure.js"
+                  "react.production.min.js"
+                  "react-dom.production.min.js"]]
       (spit (str name "/" file) (slurp (clojure.java.io/resource (str "shared/" file)))))
     (spit (str name "/style.css") style)
     (spit (str name "/index.html") index)))
@@ -500,7 +504,9 @@
     (doseq [file ["codemirror.css"
                   "nord.css"
                   "codemirror.js"
-                  "clojure.js"]]
+                  "clojure.js"
+                  "react.production.min.js"
+                  "react-dom.production.min.js"]]
       (spit (str name "/" file) (slurp (clojure.java.io/resource (str "shared/" file)))))
     (spit (str name "/style.css") style)
     (spit (str name "/index.html") index)))

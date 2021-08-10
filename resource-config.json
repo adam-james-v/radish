@@ -6,5 +6,7 @@
      {"pattern": "codemirror.js"},
      {"pattern": "clojure.js"},
      {"pattern": "code-runner.cljs"}
+     {"pattern": "react.production.min.js"}
+     {"pattern": "react-dom.production.min.js"}
   ]
 }
