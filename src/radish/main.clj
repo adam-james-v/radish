@@ -488,32 +488,34 @@
         :dir name)))
 
 (defn advanced-build!
-  [org-str]
+  [org-str {:keys [fast?] :or {fast? false}}]
   (let [name (safe-name (get-title org-str))
         build-name (str name "-build")
         index (binding [*user-src-fn* src-fn] (org->site org-str :advanced))
         style (str (rand-cols-css)
                    (slurp (clojure.java.io/resource "shared/style.css")))]
-    (run-radish-build! org-str)
-    (sh "mkdir" "-p" name)
-    (sh "cp"
-        (str build-name "/compiled/radish.js")
-        (str build-name "/compiled/radish.reagent.js")
-        name)
-    (sh "rm" "-rf" build-name)
-    (doseq [file ["codemirror.css"
-                  "nord.css"
-                  "codemirror.js"
-                  "clojure.js"
-                  "react.production.min.js"
-                  "react-dom.production.min.js"]]
-      (spit (str name "/" file) (slurp (clojure.java.io/resource (str "shared/" file)))))
-    (spit (str name "/style.css") style)
+    (when-not fast?
+      (run-radish-build! org-str)
+      (sh "mkdir" "-p" name)
+      (sh "cp"
+          (str build-name "/compiled/radish.js")
+          (str build-name "/compiled/radish.reagent.js")
+          name)
+      (sh "rm" "-rf" build-name)
+      (doseq [file ["codemirror.css"
+                    "nord.css"
+                    "codemirror.js"
+                    "clojure.js"
+                    "react.production.min.js"
+                    "react-dom.production.min.js"]]
+        (spit (str name "/" file) (slurp (clojure.java.io/resource (str "shared/" file)))))
+      (spit (str name "/style.css") style))
     (spit (str name "/index.html") index)))
 
 (def cli-options
   [["-i" "--infile FNAME" "The file to be compiled."
     :default nil]
+   ["-f" "--fast" "Re-compile only the index.html file"]
    ["-h" "--help"]])
 
 (defn- requires-advanced?
@@ -524,9 +526,8 @@
 (defn -main
   [& args]
   (let [parsed (cli/parse-opts args cli-options)
-        {:keys [:infile :help]} (:options parsed)
-        [in _] (when infile (str/split infile #"\."))
-        ]
+        {:keys [:infile :fast :help]} (:options parsed)
+        [in _] (when infile (str/split infile #"\."))]
     (cond
       help
       (do (println "Usage:")
@@ -542,8 +543,9 @@
         (if (requires-advanced? org-str)
           (do
             (println "Detected external dependencies, running advanced build.")
+            (when fast (println "Fast Flag Enabled, re-compiling index.html only."))
             (println msg)
-            (advanced-build! org-str))
+            (advanced-build! org-str {:fast? fast}))
           (do
             (println "No external dependencies detected, running basic build.")
             (println msg)
