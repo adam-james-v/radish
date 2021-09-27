@@ -65,7 +65,10 @@
   (let [node (zip/node loc)
         {:keys [block attribs]} node]
     (when (and (= block :src) (contains? (set attribs) "clojure"))
-      (let [src (read-string (str "[" (apply str (:content node)) "]"))
+      (let [xcontent (->> node
+                          :content
+                          (remove #(str/starts-with? % ";")))
+            src (read-string (str "[" (apply str xcontent) "]"))
             maybe-deps (filter map? src)]
         (not (empty? (filter #(contains? % :deps) maybe-deps)))))))
 
@@ -193,6 +196,7 @@
                        (get-nodes match-ns?))]
     (->> nodes-list
          (mapcat :content)
+         (remove #(str/starts-with? % ";"))
          (apply str)
          (#(str "[" % "]"))
          read-string
@@ -205,7 +209,9 @@
 
 (def blacklisted-namespaces
   #{'hiccup.core
-    'clojure.java.shell})
+    'clojure.java.shell
+    'clojure.java.io
+    'clojure.tools.cli})
 
 (defn- blacklisted?
   [req-entry]
@@ -488,7 +494,8 @@
         :dir name)))
 
 (defn advanced-build!
-  [org-str {:keys [fast?] :or {fast? false}}]
+  [org-str {:keys [fast? keep-build?] :or {fast? false
+                                           keep-build? false}}]
   (let [name (safe-name (get-title org-str))
         build-name (str name "-build")
         index (binding [*user-src-fn* src-fn] (org->site org-str :advanced))
@@ -501,7 +508,7 @@
           (str build-name "/compiled/radish.js")
           (str build-name "/compiled/radish.reagent.js")
           name)
-      (sh "rm" "-rf" build-name)
+      (when keep-build? (sh "rm" "-rf" build-name))
       (doseq [file ["codemirror.css"
                     "nord.css"
                     "codemirror.js"
@@ -516,6 +523,7 @@
   [["-i" "--infile FNAME" "The file to be compiled."
     :default nil]
    ["-f" "--fast" "Re-compile only the index.html file"]
+   ["-k" "--keep" "Keep the Shadow-cljs build project directory."]
    ["-h" "--help"]])
 
 (defn- requires-advanced?
@@ -526,7 +534,7 @@
 (defn -main
   [& args]
   (let [parsed (cli/parse-opts args cli-options)
-        {:keys [:infile :fast :help]} (:options parsed)
+        {:keys [:infile :fast :help :keep]} (:options parsed)
         [in _] (when infile (str/split infile #"\."))]
     (cond
       help
@@ -545,7 +553,7 @@
             (println "Detected external dependencies, running advanced build.")
             (when fast (println "Fast Flag Enabled, re-compiling index.html only."))
             (println msg)
-            (advanced-build! org-str {:fast? fast}))
+            (advanced-build! org-str {:fast? fast :keep-build? keep}))
           (do
             (println "No external dependencies detected, running basic build.")
             (println msg)

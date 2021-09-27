@@ -8,6 +8,7 @@
                            #js {:mode "clojure"
                                 :theme "nord"
                                 :lineNumbers true
+                                :lineWrapping true
                                 :smartIndent true
                                 :tabSize 2})]
     (.on cm "change" (fn [_ _]

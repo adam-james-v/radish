@@ -1,6 +1,7 @@
 /*
 :root {
-  --bg: #ffecdc;
+  --bg1: #ffecdc;
+  --bg2: #fff1e5;
   --col01: #ffbae1;
   --col02: #bd6cea;
   --col03: #ff42b4;
@@ -9,7 +10,7 @@
 */
 
 html {
-  background-color: var(--bg);
+  background-color: var(--bg2);
 }
 
 #root {
@@ -22,7 +23,7 @@ html {
 }
 
 body {
-  font: 17px/1.375 Georgia, "Times New Roman", Times, serif;
+  font: 12pt/1.375 Georgia, "Times New Roman", Times, serif;
   width: 100%;
   margin: 0;
 }
@@ -41,7 +42,7 @@ main {
 }
 
 header {
-  color: #ffeeff;
+  color: var(--bg1);
   font-size: 1.75em;
   width: 100%;
   height: 280px;
@@ -67,7 +68,7 @@ header h1 {
 }
 
 footer {
-  color: #ffeeff;
+  color: var(--bg1);
   width: 100%;
   height: 280px;
   display: flex;
@@ -78,7 +79,11 @@ footer {
   box-shadow: inset 0px 15px 28px -15px #666;
   text-shadow: 1px 1px rgba(0,0,0,0.4);
 }
-                
+
+code {
+  font-size: 1rem;
+}
+
 .code-container {
   font-size: 14px;
   margin: 35px auto;
@@ -115,7 +120,8 @@ footer {
 .result code {
   display: inline-block;
   max-height: 180px;
-  overflow-y: auto;
+  width: 100%;
+  overflow: auto;
 }
 
 pre {

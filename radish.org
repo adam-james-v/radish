@@ -301,7 +301,8 @@ To do this, the following things have to happen:
 #+BEGIN_SRC css :tangle ./resources/shared/style.css
 /*
 :root {
-  --bg: #ffecdc;
+  --bg1: #ffecdc;
+  --bg2: #fff1e5;
   --col01: #ffbae1;
   --col02: #bd6cea;
   --col03: #ff42b4;
@@ -310,7 +311,7 @@ To do this, the following things have to happen:
 ,*/
 
 html {
-  background-color: var(--bg);
+  background-color: var(--bg2);
 }
 
 #root {
@@ -323,7 +324,7 @@ html {
 }
 
 body {
-  font: 17px/1.375 Georgia, "Times New Roman", Times, serif;
+  font: 12pt/1.375 Georgia, "Times New Roman", Times, serif;
   width: 100%;
   margin: 0;
 }
@@ -342,7 +343,7 @@ main {
 }
 
 header {
-  color: #ffeeff;
+  color: var(--bg1);
   font-size: 1.75em;
   width: 100%;
   height: 280px;
@@ -368,7 +369,7 @@ header h1 {
 }
 
 footer {
-  color: #ffeeff;
+  color: var(--bg1);
   width: 100%;
   height: 280px;
   display: flex;
@@ -379,7 +380,11 @@ footer {
   box-shadow: inset 0px 15px 28px -15px #666;
   text-shadow: 1px 1px rgba(0,0,0,0.4);
 }
-                
+
+code {
+  font-size: 1rem;
+}
+
 .code-container {
   font-size: 14px;
   margin: 35px auto;
@@ -416,7 +421,8 @@ footer {
 .result code {
   display: inline-block;
   max-height: 180px;
-  overflow-y: auto;
+  width: 100%;
+  overflow: auto;
 }
 
 pre {
@@ -526,6 +532,7 @@ in ~result-component~, ~js/scittle.core.eval_string~ is turned into ~js/radish.c
                            #js {:mode "clojure"
                                 :theme "nord"
                                 :lineNumbers true
+                                :lineWrapping true
                                 :smartIndent true
                                 :tabSize 2})]
     (.on cm "change" (fn [_ _]
@@ -926,7 +933,10 @@ Basically, an 'advanced' radish build will automatically generate a scittle clon
   (let [node (zip/node loc)
         {:keys [block attribs]} node]
     (when (and (= block :src) (contains? (set attribs) "clojure"))
-      (let [src (read-string (str "[" (apply str (:content node)) "]"))
+      (let [xcontent (->> node
+                          :content
+                          (remove #(str/starts-with? % ";")))
+            src (read-string (str "[" (apply str xcontent) "]"))
             maybe-deps (filter map? src)]
         (not (empty? (filter #(contains? % :deps) maybe-deps)))))))
 
@@ -1066,6 +1076,7 @@ Basically, an 'advanced' radish build will automatically generate a scittle clon
                        (get-nodes match-ns?))]
     (->> nodes-list
          (mapcat :content)
+         (remove #(str/starts-with? % ";"))
          (apply str)
          (#(str "[" % "]"))
          read-string
@@ -1078,7 +1089,9 @@ Basically, an 'advanced' radish build will automatically generate a scittle clon
 
 (def blacklisted-namespaces
   #{'hiccup.core
-    'clojure.java.shell})
+    'clojure.java.shell
+    'clojure.java.io
+    'clojure.tools.cli})
 
 (defn- blacklisted?
   [req-entry]
@@ -1376,7 +1389,8 @@ Some vars are unneeded in a Browser context, like an svg! fn which spits a file 
         :dir name)))
 
 (defn advanced-build!
-  [org-str {:keys [fast?] :or {fast? false}}]
+  [org-str {:keys [fast? keep-build?] :or {fast? false
+                                           keep-build? false}}]
   (let [name (safe-name (get-title org-str))
         build-name (str name "-build")
         index (binding [*user-src-fn* src-fn] (org->site org-str :advanced))
@@ -1389,7 +1403,7 @@ Some vars are unneeded in a Browser context, like an svg! fn which spits a file 
           (str build-name "/compiled/radish.js")
           (str build-name "/compiled/radish.reagent.js")
           name)
-      (sh "rm" "-rf" build-name)
+      (when keep-build? (sh "rm" "-rf" build-name))
       (doseq [file ["codemirror.css"
                     "nord.css"
                     "codemirror.js"
@@ -1408,6 +1422,7 @@ Some vars are unneeded in a Browser context, like an svg! fn which spits a file 
   [["-i" "--infile FNAME" "The file to be compiled."
     :default nil]
    ["-f" "--fast" "Re-compile only the index.html file"]
+   ["-k" "--keep" "Keep the Shadow-cljs build project directory."]
    ["-h" "--help"]])
 
 (defn- requires-advanced?
@@ -1418,7 +1433,7 @@ Some vars are unneeded in a Browser context, like an svg! fn which spits a file 
 (defn -main
   [& args]
   (let [parsed (cli/parse-opts args cli-options)
-        {:keys [:infile :fast :help]} (:options parsed)
+        {:keys [:infile :fast :help :keep]} (:options parsed)
         [in _] (when infile (str/split infile #"\."))]
     (cond
       help
@@ -1437,7 +1452,7 @@ Some vars are unneeded in a Browser context, like an svg! fn which spits a file 
             (println "Detected external dependencies, running advanced build.")
             (when fast (println "Fast Flag Enabled, re-compiling index.html only."))
             (println msg)
-            (advanced-build! org-str {:fast? fast}))
+            (advanced-build! org-str {:fast? fast :keep-build? keep}))
           (do
             (println "No external dependencies detected, running basic build.")
             (println msg)
